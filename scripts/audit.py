@@ -9,6 +9,7 @@ from pathlib import Path
 from pyspark.sql import SparkSession
 
 from trajectory_prefix.projection import Policy
+from trajectory_prefix.residuals import review_files
 from trajectory_prefix.storage import Reader, StorageConfig, reference
 from trajectory_prefix.verification import raw_covers
 
@@ -185,6 +186,13 @@ def main():
             or counts.get(("all", "witness_verified"), 0) != initial["removed_count"]
         ):
             raise RuntimeError("Not all outputs and witnesses were checked")
+        parts = [str(path) for path in sorted((source / "decisions").glob("part-*"))]
+        residual = dict(
+            sc.parallelize(parts, min(a.partitions, len(parts)) or 1)
+            .mapPartitions(lambda paths: review_files(paths, str(source), str(output), policy))
+            .reduceByKey(lambda x, y: x + y)
+            .collect()
+        )
         report = {
             "passed": True,
             "spark_master": sc.master,
@@ -194,6 +202,14 @@ def main():
             "counts": {
                 group: {k: v for (g, k), v in counts.items() if g == group}
                 for group in sorted({g for g, k in counts})
+            },
+            "residual_review": {
+                "definition": "Adjacent retained prefixes within each original sorted partition; at least four messages and 80% common prefix of the shorter record.",
+                "limitation": "This does not discover every possible alternative normalization, particularly differences in the first two messages.",
+                "counts": {
+                    group: {k: v for (g, k), v in residual.items() if g == group}
+                    for group in sorted({g for g, k in residual})
+                },
             },
         }
         (output / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")

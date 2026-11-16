@@ -7,6 +7,7 @@ import pytest
 from test_tool_ids import sample
 
 from trajectory_prefix.projection import Policy
+from trajectory_prefix.residuals import review_files
 from trajectory_prefix.storage import StorageConfig, reference
 
 spec = importlib.util.spec_from_file_location(
@@ -70,3 +71,34 @@ def test_audit_rejects_incorrect_semantic_witness_even_with_valid_hashes(tmp_pat
     line = json.dumps({"status": "removed", "record": a, "retained": b})
     with pytest.raises(RuntimeError, match="witness verification failed"):
         list(audit.verify_partition([line], str(source), StorageConfig(), Policy()))
+
+
+def test_residual_review_reports_real_message_difference_without_merging(tmp_path):
+    source = tmp_path / "run"
+    decisions = []
+    for name, answer in (("a", "branch one"), ("b", "branch two")):
+        node = {
+            "metadata": {"session_id": "s"},
+            "messages": [
+                {"role": "user", "content": "start"},
+                {"role": "assistant", "content": "ready"},
+                {"role": "user", "content": "next"},
+                {"role": "assistant", "content": "done"},
+                {"role": "user", "content": "last"},
+                {"role": "assistant", "content": answer},
+            ],
+        }
+        ref = input_ref(tmp_path, name + ".json", node)
+        dest = source / "trajectories" / ref["id"]
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(Path(ref["local_path"]).read_bytes())
+        decisions.append(json.dumps({"status": "kept", "record": ref}))
+    part = tmp_path / "part-00000"
+    part.write_text("\n".join(decisions) + "\n")
+    output = tmp_path / "audit"
+    counts = dict(review_files([str(part)], str(source), str(output), Policy()))
+    assert counts[("all", "retained_reviewed")] == 2
+    assert counts[("all", "category:assistant->assistant:content")] == 1
+    samples = json.loads((output / "near-prefix-samples/part-00000.json").read_text())
+    assert samples[0]["common_messages"] == 5
+    assert samples[0]["short_message"]["content"] == "branch one"
