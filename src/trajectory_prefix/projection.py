@@ -21,7 +21,7 @@ def digest(value: bytes) -> bytes:
 
 @dataclass(frozen=True)
 class Policy:
-    rules: tuple[str, ...] = ("billing_cch", "assistant_trailing_space")
+    rules: tuple[str, ...] = ("billing_cch", "assistant_trailing_space", "tool_id_alpha")
     anonymous_min_messages: int = 6
     anonymous_min_chars: int = 1024
 
@@ -106,6 +106,8 @@ def project(node: dict[str, Any], dataset: str, date: str, policy: Policy = Poli
     roles: Counter[str] = Counter()
     meaningful_chars = 0
     isolation = ""
+    bindings: dict[str, tuple[int, str]] = {}
+    call_position = 0
     for message in node["messages"]:
         if not isinstance(message, dict) or not isinstance(message.get("content"), str):
             raise ValueError("Expected normalized messages with string content")
@@ -131,6 +133,32 @@ def project(node: dict[str, Any], dataset: str, date: str, policy: Policy = Poli
             value["content"] = trimmed
         if role == "assistant" and not value.get("tool_calls"):
             value.pop("tool_calls", None)
+        if "tool_id_alpha" in policy.rules:
+            if role == "assistant" and value.get("tool_calls"):
+                calls = []
+                for call in value["tool_calls"]:
+                    identifier = call.get("id")
+                    if not isinstance(identifier, str) or not identifier or identifier in bindings:
+                        isolation = "ambiguous_tool_binding"
+                    else:
+                        bindings[identifier] = (
+                            call_position,
+                            call.get("function", {}).get("name", ""),
+                        )
+                    calls.append(dict(call, id=["call-position", call_position]))
+                    call_position += 1
+                value["tool_calls"] = calls
+                changes.add("tool_id_alpha")
+            elif role == "tool":
+                identifier = value.get("tool_call_id")
+                if identifier not in bindings:
+                    isolation = "unresolved_tool_binding"
+                else:
+                    position, name = bindings[identifier]
+                    if value.get("name", "") != name:
+                        isolation = "tool_name_binding_mismatch"
+                    value["tool_call_id"] = ["call-position", position]
+                    changes.add("tool_id_alpha")
         tokens.append(canonical(value))
     if not roles["user"] or not roles["assistant"]:
         isolation = "no_user_assistant_exchange"
