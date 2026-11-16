@@ -29,6 +29,11 @@ class Policy:
     )
     anonymous_min_messages: int = 6
     anonymous_min_chars: int = 1024
+    extra_information: str = "tools_only"
+
+    def __post_init__(self):
+        if self.extra_information not in {"tools_only", "preserve_all"}:
+            raise ValueError("Unknown extra-information policy")
 
 
 @dataclass(frozen=True)
@@ -205,13 +210,17 @@ def project(node: dict[str, Any], dataset: str, date: str, policy: Policy = Poli
     for issue in audit.get("issues", []):
         if issue.get("code") in {"metadata_session_id_masked", "metadata_user_id_masked"}:
             isolation = "redacted_identity"
-    guard = {k: v for k, v in node.items() if k not in DERIVED | PROVENANCE | ASSETS | {"messages"}}
-    if isinstance(guard.get("instructions"), str):
-        guard["instructions"] = normalize_header(guard["instructions"], policy, changes)
-    guard["metadata_extra"] = {k: v for k, v in md.items() if k not in METADATA_PROVENANCE}
-    guard["is_subagent"] = bool((node.get("completeness") or {}).get("is_subagent"))
+    guard = {}
+    if policy.extra_information == "preserve_all":
+        guard = {
+            k: v for k, v in node.items() if k not in DERIVED | PROVENANCE | ASSETS | {"messages"}
+        }
+        if isinstance(guard.get("instructions"), str):
+            guard["instructions"] = normalize_header(guard["instructions"], policy, changes)
+        guard["metadata_extra"] = {k: v for k, v in md.items() if k not in METADATA_PROVENANCE}
+        guard["is_subagent"] = bool((node.get("completeness") or {}).get("is_subagent"))
     assets = {}
-    for field in ASSETS:
+    for field in ASSETS if policy.extra_information == "preserve_all" else {"tools"}:
         items = node.get(field) or []
         if not isinstance(items, list):
             raise ValueError(f"{field} must be an array")
@@ -229,7 +238,7 @@ def project(node: dict[str, Any], dataset: str, date: str, policy: Policy = Poli
 
 
 def covers(short: Projection, long: Projection) -> bool:
-    """Require exact projected prefix bytes and retention of all auxiliary data."""
+    """Require exact projected prefix bytes and the selected auxiliary checks."""
     if not short.mergeable or not long.mergeable or short.scope != long.scope:
         return False
     if not short.tokens or len(short.tokens) > len(long.tokens) or short.guard != long.guard:

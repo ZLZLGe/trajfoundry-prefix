@@ -41,10 +41,13 @@ Executor 临时文件与 SQLite 都使用 Pod 本地磁盘；代码、输入清�
   --control /share/project/runs/control-data-01 \
   --output /share/project/runs/data-01 \
   --input-plan /share/project/input.jsonl \
+  --extra-information tools_only \
   --executors 16 --executor-cores 8 --partitions 1024 --execute
 ```
 
 不加 `--execute` 只生成计划和代码快照；真正执行请用新的控制和输出目录重新提交。程序拒绝复用已有输出目录，失败产物保留供排查。提交脚本会检查 Driver Pod 是否 Succeeded，不能只根据 `spark-submit` 的退出码判断任务成功。
+
+`tools_only` 为默认值，附加信息只检查工具定义。需要与旧的全部附加信息保护策略对比时，使用 `--extra-information preserve_all`。运行报告保存具体策略，核验程序按照该次运行的策略验证，不能混用。
 
 ## 目录
 

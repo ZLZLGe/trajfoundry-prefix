@@ -39,20 +39,23 @@ def test_prefix_branches_and_transitive_final_witness(tmp_path):
             assert r["retained"]["id"] in {"c", "d"}
 
 
-def test_unknown_fields_subagents_and_tools_are_protected(tmp_path):
+def test_extra_information_mode_keeps_tools_required(tmp_path):
+    strict = Policy(extra_information="preserve_all")
     a = node(
         [user(), assistant()],
         sub_agent_trajectory={"child": {"messages": [assistant("important")]}},
     )
     b = node([user(), assistant(), user("next"), assistant("done")])
-    assert not covers(project(a, "x", "d"), project(b, "x", "d"))
+    assert covers(project(a, "x", "d"), project(b, "x", "d"))
+    assert not covers(project(a, "x", "d", strict), project(b, "x", "d", strict))
     a.pop("sub_agent_trajectory")
     a["tools"] = [{"name": "important", "parameters": {}}]
     assert not covers(project(a, "x", "d"), project(b, "x", "d"))
     b["tools"] = deepcopy(a["tools"])
     assert covers(project(a, "x", "d"), project(b, "x", "d"))
     a["custom_evidence"] = "must retain"
-    assert not covers(project(a, "x", "d"), project(b, "x", "d"))
+    assert covers(project(a, "x", "d"), project(b, "x", "d"))
+    assert not covers(project(a, "x", "d", strict), project(b, "x", "d", strict))
 
 
 def test_identity_model_content_and_empty_captures_do_not_merge():

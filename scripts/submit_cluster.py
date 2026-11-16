@@ -105,6 +105,7 @@ def command(
     executors=16,
     executor_cores=8,
     rules=None,
+    extra_information="tools_only",
 ):
     if not config["master"].startswith("k8s://https://"):
         raise ValueError("Cluster submission requires Kubernetes HTTPS")
@@ -199,6 +200,8 @@ def command(
         ]
         if rules is not None and not audit_run:
             result += ["--rules", rules]
+        if not audit_run:
+            result += ["--extra-information", extra_information]
     return pod, result
 
 
@@ -230,6 +233,9 @@ def main():
     p.add_argument("--executor-cores", type=int, default=8)
     p.add_argument("--partitions", type=int, default=512)
     p.add_argument("--rules")
+    p.add_argument(
+        "--extra-information", choices=("tools_only", "preserve_all"), default="tools_only"
+    )
     p.add_argument("--execute", action="store_true")
     a = p.parse_args()
     c = json.loads(a.config.read_text())
@@ -259,6 +265,7 @@ def main():
         executor_cores=a.executor_cores,
         partitions=a.partitions,
         rules=a.rules,
+        extra_information=a.extra_information,
     )
     templates = {
         r: pod_template(c, control, output, driver=r == "driver", pod=pod)

@@ -81,6 +81,8 @@ def _header(value, policy):
 
 
 def _guard(node, policy):
+    if policy.extra_information == "tools_only":
+        return {}
     result = {
         k: v for k, v in node.items() if k not in DERIVED | PROVENANCE | ASSETS | {"messages"}
     }
@@ -119,7 +121,7 @@ def raw_covers(short, long, short_ref, long_ref, policy=Policy()):
         return False
     if encoded(_guard(short, policy)) != encoded(_guard(long, policy)):
         return False
-    for field in ASSETS:
+    for field in ASSETS if policy.extra_information == "preserve_all" else {"tools"}:
         if Counter(map(encoded, short.get(field) or [])) - Counter(
             map(encoded, long.get(field) or [])
         ):

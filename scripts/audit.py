@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
 from pyspark.sql import SparkSession
@@ -45,10 +46,10 @@ def verify_partition(lines, source, storage, policy):
             short, long = reader.node(ref), output_reader.node(target)
             if not raw_covers(short, long, ref, retained, policy):
                 raise RuntimeError("Independent witness verification failed: " + ref["id"])
-            strict = raw_covers(short, long, ref, retained, Policy(()))
+            strict = raw_covers(short, long, ref, retained, replace(policy, rules=()))
             required = []
             for rule in policy.rules:
-                without = Policy(tuple(r for r in policy.rules if r != rule))
+                without = replace(policy, rules=tuple(r for r in policy.rules if r != rule))
                 if not raw_covers(short, long, ref, retained, without):
                     required.append(rule)
             for g in group:
@@ -122,7 +123,10 @@ def main():
         raise RuntimeError("Source run is incomplete")
     output.mkdir(parents=True, exist_ok=False)
     initial = json.loads((source / "report.json").read_text())
-    policy = Policy(tuple(initial["policy"]["rules"]))
+    policy_config = dict(initial["policy"])
+    policy_config["rules"] = tuple(policy_config["rules"])
+    policy_config.setdefault("extra_information", "preserve_all")
+    policy = Policy(**policy_config)
     storage = StorageConfig(a.s3_endpoint, a.s3_region, a.s3_credentials_file, a.cache_dir)
     manifest_sha = verify_metadata(source, initial)
     spark = SparkSession.builder.appName("trajectory-prefix-audit").getOrCreate()

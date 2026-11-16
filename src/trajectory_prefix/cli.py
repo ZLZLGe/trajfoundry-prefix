@@ -16,6 +16,9 @@ def main():
     parser.add_argument("--master", default=None)
     parser.add_argument("--partitions", type=int, default=64)
     parser.add_argument(
+        "--extra-information", choices=("tools_only", "preserve_all"), default="tools_only"
+    )
+    parser.add_argument(
         "--rules",
         default=",".join(Policy().rules),
         help="Comma separated rules; empty disables robustness rules",
@@ -45,7 +48,7 @@ def main():
             args.input_plan,
             Path(args.output),
             partitions=args.partitions,
-            policy=Policy(rules),
+            policy=Policy(rules, extra_information=args.extra_information),
             storage=StorageConfig(
                 args.s3_endpoint, args.s3_region, args.s3_credentials_file, args.cache_dir
             ),
