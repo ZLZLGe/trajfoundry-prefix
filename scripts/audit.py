@@ -123,6 +123,8 @@ def main():
         raise RuntimeError("Source run is incomplete")
     output.mkdir(parents=True, exist_ok=False)
     initial = json.loads((source / "report.json").read_text())
+    if initial.get("check_only"):
+        raise RuntimeError("A check-only run has no published trajectories to audit")
     policy_config = dict(initial["policy"])
     policy_config["rules"] = tuple(policy_config["rules"])
     policy_config.setdefault("extra_information", "preserve_all")

@@ -107,7 +107,10 @@ def command(
     rules=None,
     extra_information="tools_only",
     input_cache=True,
+    check_only=False,
 ):
+    if check_only and (probe or audit_run):
+        raise ValueError("--check-only requires --input-plan")
     if not config["master"].startswith("k8s://https://"):
         raise ValueError("Cluster submission requires Kubernetes HTTPS")
     if not config["queue"]:
@@ -203,6 +206,8 @@ def command(
             result += ["--rules", rules]
         if not audit_run:
             result += ["--extra-information", extra_information]
+        if check_only:
+            result += ["--check-only"]
     return pod, result
 
 
@@ -241,6 +246,10 @@ def main():
         "--no-input-cache", action="store_true",
         help="Read verified inputs without retaining a copy in each Pod's scratch directory",
     )
+    p.add_argument(
+        "--check-only", action="store_true",
+        help="Compare all inputs without making another copy of the retained trajectories",
+    )
     p.add_argument("--execute", action="store_true")
     a = p.parse_args()
     c = json.loads(a.config.read_text())
@@ -253,6 +262,8 @@ def main():
         p.error("Resources and partitions must be positive")
     if sum(bool(x) for x in (a.probe, a.input_plan, a.audit_run)) != 1:
         p.error("Choose exactly one of --input-plan, --probe, --audit-run")
+    if a.check_only and not a.input_plan:
+        p.error("--check-only requires --input-plan")
     audit_run = shared_path(a.audit_run, c["shared_root"]) if a.audit_run else None
     if audit_run and not (audit_run / "SUCCEEDED").is_file():
         p.error("Audit source run has not completed")
@@ -272,6 +283,7 @@ def main():
         rules=a.rules,
         extra_information=a.extra_information,
         input_cache=not a.no_input_cache,
+        check_only=a.check_only,
     )
     templates = {
         r: pod_template(c, control, output, driver=r == "driver", pod=pod)

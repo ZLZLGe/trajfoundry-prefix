@@ -51,6 +51,8 @@ Executor 临时文件与 SQLite 都使用 Pod 本地磁盘；代码、输入清�
 
 `tools_only` 为默认值，附加信息只检查工具定义。需要与旧的全部附加信息保护策略对比时，使用 `--extra-information preserve_all`。运行报告保存具体策略，核验程序按照该次运行的策略验证，不能混用。
 
+`--check-only` 可用于对保留结果再比较一遍：仍处理输入清单中的每条完整轨迹，只写决策和报告，不再复制轨迹文件。它要求 `--input-plan`，不能与 `--probe` 或 `--audit-run` 组合。具体核验顺序见 [validation.md](validation.md)。
+
 ## 目录
 
 ```text

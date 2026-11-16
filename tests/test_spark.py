@@ -67,3 +67,17 @@ def test_spark_keeps_original_bytes_and_rechecks_output(spark, tmp_path):
         assert body in [Path(x["local_path"]).read_bytes() for x in plan]
     second = run(spark, output / "retained-input.jsonl", tmp_path / "again", partitions=2)
     assert second["removed_count"] == 0
+    checked = tmp_path / "checked"
+    comparison = run(spark, p, checked, partitions=2, check_only=True)
+    assert comparison["input_count"] == 3 and comparison["removed_count"] == 2
+    assert comparison["check_only"] is True and "output_bytes" not in comparison
+    assert not (checked / "trajectories").exists() and not (checked / "manifest.json").exists()
+    decisions = [
+        json.loads(line)
+        for part in (checked / "decisions").glob("part-*")
+        for line in part.read_text().splitlines()
+    ]
+    assert {d["record"]["path"] for d in decisions} == {e["path"] for e in plan}
+    assert sum(d["status"] == "removed" for d in decisions) == 2
+    for e in plan:
+        assert hashlib.sha256(Path(e["local_path"]).read_bytes()).hexdigest() == e["sha256"]

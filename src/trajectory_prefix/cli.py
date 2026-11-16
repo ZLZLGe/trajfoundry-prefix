@@ -27,6 +27,10 @@ def main():
     parser.add_argument("--s3-region", default="us-east-1")
     parser.add_argument("--s3-credentials-file")
     parser.add_argument("--cache-dir")
+    parser.add_argument(
+        "--check-only", action="store_true",
+        help="Compare every input and write decisions without copying retained trajectories",
+    )
     args = parser.parse_args()
     if "://" in args.output or not Path(args.output).is_absolute():
         parser.error("--output must be an absolute local/shared filesystem path")
@@ -52,6 +56,7 @@ def main():
             storage=StorageConfig(
                 args.s3_endpoint, args.s3_region, args.s3_credentials_file, args.cache_dir
             ),
+            check_only=args.check_only,
         )
         print(json.dumps(report, ensure_ascii=False), flush=True)
     finally:

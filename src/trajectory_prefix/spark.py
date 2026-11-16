@@ -80,6 +80,13 @@ def aggregate_counts(rows):
     yield from counts.items()
 
 
+def finish(output, report):
+    (output / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+    (output / "SUCCEEDED").write_text(datetime.now(UTC).isoformat() + "\n")
+    (output / "RUNNING").unlink()
+    return report
+
+
 def run(
     spark,
     input_plan: Path,
@@ -88,6 +95,7 @@ def run(
     partitions=64,
     policy=Policy(),
     storage=StorageConfig(),
+    check_only=False,
 ):
     output = output.resolve()
     if str(output).startswith(("s3:", "s3a:")):
@@ -129,6 +137,23 @@ def run(
     )
     if counts.get(("all", "input")) != input_count:
         raise RuntimeError("Decision count does not match input count")
+    kept_count = counts.get(("all", "kept"), 0)
+    report = {
+        "spark_version": spark.version,
+        "spark_master": sc.master,
+        "policy": asdict(policy),
+        "input_plan": str(input_plan.resolve()),
+        "input_count": input_count,
+        "kept_count": kept_count,
+        "removed_count": input_count - kept_count,
+        "counts": {
+            source: {field: n for (s, field), n in counts.items() if s == source}
+            for source in sorted({s for s, _ in counts})
+        },
+    }
+    if check_only:
+        report["check_only"] = True
+        return finish(output, report)
     results = decisions.mapPartitions(
         lambda rows: publish_partition(rows, str(output), storage)
     ).collect()
@@ -172,21 +197,5 @@ def run(
                         + "\n"
                     )
         manifest.write("]}\n")
-    report = {
-        "spark_version": spark.version,
-        "spark_master": sc.master,
-        "policy": asdict(policy),
-        "input_plan": str(input_plan.resolve()),
-        "input_count": input_count,
-        "kept_count": kept_count,
-        "removed_count": input_count - kept_count,
-        "output_bytes": kept_bytes,
-        "counts": {
-            source: {field: n for (s, field), n in counts.items() if s == source}
-            for source in sorted({s for s, _ in counts})
-        },
-    }
-    (output / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
-    (output / "SUCCEEDED").write_text(datetime.now(UTC).isoformat() + "\n")
-    (output / "RUNNING").unlink()
-    return report
+    report["output_bytes"] = kept_bytes
+    return finish(output, report)
