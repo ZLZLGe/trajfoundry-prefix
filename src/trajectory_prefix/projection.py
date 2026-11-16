@@ -21,7 +21,7 @@ def digest(value: bytes) -> bytes:
 
 @dataclass(frozen=True)
 class Policy:
-    rules: tuple[str, ...] = ("billing_cch",)
+    rules: tuple[str, ...] = ("billing_cch", "assistant_trailing_space")
     anonymous_min_messages: int = 6
     anonymous_min_chars: int = 1024
 
@@ -124,6 +124,11 @@ def project(node: dict[str, Any], dataset: str, date: str, policy: Policy = Poli
         }
         if role in {"system", "developer"}:
             value["content"] = normalize_header(value["content"], policy, changes)
+        if role == "assistant" and "assistant_trailing_space" in policy.rules:
+            trimmed = value["content"].rstrip(" \t\r\n")
+            if trimmed != value["content"]:
+                changes.add("assistant_trailing_space")
+            value["content"] = trimmed
         if role == "assistant" and not value.get("tool_calls"):
             value.pop("tool_calls", None)
         tokens.append(canonical(value))

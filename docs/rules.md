@@ -15,3 +15,7 @@
 已在真实 TokenPlan 原始请求中确认，同一调用继续回放时，system 首行 cch 改变，其他指令一致。cch 是动态计费标记，不改变分类所需的用户任务。
 
 只屏蔽 system/developer 或 instructions 开头 `x-anthropic-billing-header:` 那一行的十六进制 `cch=...;` 值；版本、其他字段、真正指令和用户文本继续精确比较。不会在任意文本里做替换。
+
+## 2. assistant 正文末尾的 ASCII 空白
+
+真实采集出现 response 的正文为两个换行，下一次 request 回传同一工具调用时省去了空白正文。只在 assistant 比较副本里去掉末尾空格、制表符、CR 和 LF；正文内部、开头、Unicode 空白、user/system/tool 内容、工具参数均不动。不会删除空消息或改变消息顺序和步数。
