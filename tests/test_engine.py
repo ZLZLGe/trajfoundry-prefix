@@ -97,3 +97,30 @@ def test_anonymous_short_exchange_is_isolated():
     a = node([user(), assistant()])
     a["metadata"] = {}
     assert not project(a, "x", "d", Policy()).mergeable
+
+
+def test_scan_matches_all_pairs_maximality_with_branches_and_auxiliary_variants(tmp_path):
+    import random
+
+    from trajectory_prefix.verification import raw_covers
+
+    rng = random.Random(20261117)
+    raw = {}
+    ref = {"dataset": "source", "date": "2026-01-01"}
+    for i in range(120):
+        messages = [user("question " + str(rng.randrange(3))), assistant("answer")]
+        for depth in range(rng.randrange(4)):
+            messages += [user("next " + str(depth)), assistant("branch " + str(rng.randrange(2)))]
+        n = node(messages, custom_guard=rng.randrange(2))
+        n["tools"] = [{"name": "tool" + str(k)} for k in range(rng.randrange(3))]
+        raw[str(i)] = n
+    rows = deduplicate([record(k, n) for k, n in raw.items()], tmp_path)
+    kept = {r["record"]["id"] for r in rows if r["status"] == "kept"}
+    for row in rows:
+        key = row["record"]["id"]
+        if row["status"] == "removed":
+            target = row["retained"]["id"]
+            assert target in kept
+            assert raw_covers(raw[key], raw[target], ref, ref)
+        else:
+            assert not any(raw_covers(raw[key], raw[other], ref, ref) for other in kept - {key})

@@ -100,6 +100,7 @@ def command(
     *,
     input_plan=None,
     probe=False,
+    audit_run=None,
     partitions=512,
     executors=16,
     executor_cores=8,
@@ -175,15 +176,16 @@ def command(
     ]
     for k, v in conf.items():
         result += ["--conf", f"{k}={v}"]
+    application = "cluster_probe.py" if probe else "audit.py" if audit_run else "run.py"
     result += [
-        "local://" + str(control / "app/scripts" / ("cluster_probe.py" if probe else "run.py")),
+        "local://" + str(control / "app/scripts" / application),
         "--output",
         str(output),
     ]
     if not probe:
         result += [
-            "--input-plan",
-            str(input_plan),
+            "--source-run" if audit_run else "--input-plan",
+            str(audit_run or input_plan),
             "--partitions",
             str(partitions),
             "--s3-endpoint",
@@ -195,7 +197,7 @@ def command(
             "--cache-dir",
             LOCAL_DIR + "/input-cache",
         ]
-        if rules is not None:
+        if rules is not None and not audit_run:
             result += ["--rules", rules]
     return pod, result
 
@@ -223,6 +225,7 @@ def main():
     p.add_argument("--output", required=True)
     p.add_argument("--input-plan")
     p.add_argument("--probe", action="store_true")
+    p.add_argument("--audit-run")
     p.add_argument("--executors", type=int, default=16)
     p.add_argument("--executor-cores", type=int, default=8)
     p.add_argument("--partitions", type=int, default=512)
@@ -237,8 +240,11 @@ def main():
         p.error("Use fresh control and output directories")
     if min(a.executors, a.executor_cores, a.partitions) < 1:
         p.error("Resources and partitions must be positive")
-    if not a.probe and not a.input_plan:
-        p.error("--input-plan is required except for the synthetic probe")
+    if sum(bool(x) for x in (a.probe, a.input_plan, a.audit_run)) != 1:
+        p.error("Choose exactly one of --input-plan, --probe, --audit-run")
+    audit_run = shared_path(a.audit_run, c["shared_root"]) if a.audit_run else None
+    if audit_run and not (audit_run / "SUCCEEDED").is_file():
+        p.error("Audit source run has not completed")
     input_plan = shared_path(a.input_plan, c["shared_root"]) if a.input_plan else None
     if input_plan and not input_plan.is_file():
         p.error("Input plan does not exist")
@@ -248,6 +254,7 @@ def main():
         output,
         input_plan=input_plan,
         probe=a.probe,
+        audit_run=audit_run,
         executors=a.executors,
         executor_cores=a.executor_cores,
         partitions=a.partitions,
