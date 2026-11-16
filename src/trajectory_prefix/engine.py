@@ -25,6 +25,7 @@ class Record:
             self.projection.vector,
             -self.reference.get("bytes", 0),
             self.reference["id"],
+            self.projection.mergeable,
         )
 
 

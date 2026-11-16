@@ -16,6 +16,11 @@ from .storage import Reader, StorageConfig, atomic_bytes, reference
 
 
 def partition_key(key):
+    if not key[4]:
+        # Isolated records are always kept and can never witness a deletion.
+        # Repeated masked identities/common prompts must not force them all
+        # through one executor during a complete-date scan.
+        return int.from_bytes(digest(key[3].encode())[:8], "big")
     # Any mergeable prefix has at least user+assistant. The first two tokens
     # distribute large sessionless identities without splitting prefix chains.
     return int.from_bytes(digest(key[0] + key[1][:64])[:8], "big")

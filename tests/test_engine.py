@@ -102,6 +102,36 @@ def test_anonymous_short_exchange_is_isolated():
     assert not project(a, "x", "d", Policy()).mergeable
 
 
+def test_distributing_isolated_records_preserves_every_prefix_decision(tmp_path):
+    from collections import defaultdict
+
+    from trajectory_prefix.spark import partition_key
+
+    isolated = node([user(), assistant()])
+    isolated["normalization_audit"] = {"issues": [{"code": "metadata_user_id_masked"}]}
+    records = [record(f"isolated-{i}", deepcopy(isolated)) for i in range(100)]
+    short = record("short", node([user(), assistant()]))
+    long = record("long", node([user(), assistant(), user("next"), assistant("done")]))
+    records += [short, long]
+    partitions = defaultdict(list)
+    for row in records:
+        partitions[partition_key(row.key) % 8].append(row)
+    assert len({partition_key(row.key) % 8 for row in records[:100]}) > 1
+    assert partition_key(short.key) == partition_key(long.key)
+    together = tmp_path / "together"
+    together.mkdir()
+    expected = deduplicate(records, together)
+    actual = []
+    for index, rows in partitions.items():
+        directory = tmp_path / str(index)
+        directory.mkdir()
+        actual.extend(deduplicate(rows, directory))
+    assert sorted(actual, key=lambda row: row["record"]["id"]) == sorted(
+        expected, key=lambda row: row["record"]["id"]
+    )
+    assert sum(row["status"] == "kept" for row in actual) == 101
+
+
 def test_scan_matches_all_pairs_maximality_with_branches_and_auxiliary_variants(tmp_path):
     import random
 
