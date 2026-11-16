@@ -26,6 +26,7 @@ class Policy:
         "assistant_trailing_space",
         "tool_id_alpha",
         "empty_assistant",
+        "claude_preamble_cch",
     )
     anonymous_min_messages: int = 6
     anonymous_min_chars: int = 1024
@@ -81,6 +82,11 @@ METADATA_PROVENANCE = {
 }
 SENTINELS = {"", "no_session_id", "no_user_id", "null", "none", "unknown"}
 BILLING_CCH = re.compile(r"\A(x-anthropic-billing-header:[^\n]*?\bcch=)[0-9a-fA-F]+(?=;)")
+CLAUDE_PREAMBLE = "You are Claude Code, Anthropic's official CLI for Claude."
+PREAMBLE_BILLING_LINE = re.compile(
+    r"x-anthropic-billing-header: cc_version=[0-9][A-Za-z0-9._+-]*; "
+    r"cc_entrypoint=[A-Za-z0-9_-]+; cch=[0-9a-fA-F]+;[ \t\r]*"
+)
 
 
 def normalize_header(text: str, policy: Policy, changes: set[str]) -> str:
@@ -88,7 +94,21 @@ def normalize_header(text: str, policy: Policy, changes: set[str]) -> str:
         normalized = BILLING_CCH.sub(r"\g<1><volatile-cch>", text)
         if normalized != text:
             changes.add("billing_cch")
-        return normalized
+        text = normalized
+    if "claude_preamble_cch" in policy.rules and text.startswith(CLAUDE_PREAMBLE):
+        preamble, separator, tail = text.partition("\n\n")
+        first_line = tail.partition("\n")[0]
+        if (
+            separator
+            and "```" not in preamble
+            and "~~~" not in preamble
+            and "x-anthropic-billing-header:" not in preamble
+            and PREAMBLE_BILLING_LINE.fullmatch(first_line)
+        ):
+            normalized = BILLING_CCH.sub(r"\g<1><volatile-cch>", tail)
+            if normalized != tail:
+                changes.add("claude_preamble_cch")
+            text = preamble + separator + normalized
     return text
 
 

@@ -73,11 +73,29 @@ def _eligible(node, policy):
 
 
 def _header(value, policy):
-    if "billing_cch" not in policy.rules or not value.startswith("x-anthropic-billing-header:"):
-        return value
-    first, separator, rest = value.partition("\n")
-    first = re.sub(r"\bcch=[0-9a-fA-F]+;", "cch=<volatile-cch>;", first, count=1)
-    return first + separator + rest
+    if "billing_cch" in policy.rules and value.startswith("x-anthropic-billing-header:"):
+        first, separator, rest = value.partition("\n")
+        first = re.sub(r"\bcch=[0-9a-fA-F]+;", "cch=<volatile-cch>;", first, count=1)
+        value = first + separator + rest
+    if "claude_preamble_cch" in policy.rules and value.startswith(
+        "You are Claude Code, Anthropic's official CLI for Claude."
+    ):
+        intro, gap, remainder = value.partition("\n\n")
+        line, newline, rest = remainder.partition("\n")
+        fields = line.rstrip(" \t\r").split("; ")
+        if (
+            gap
+            and not any(marker in intro for marker in ("```", "~~~", "x-anthropic-billing-header:"))
+            and len(fields) == 3
+            and re.fullmatch(
+                r"x-anthropic-billing-header: cc_version=[0-9][A-Za-z0-9._+-]*", fields[0]
+            )
+            and re.fullmatch(r"cc_entrypoint=[A-Za-z0-9_-]+", fields[1])
+            and re.fullmatch(r"cch=[0-9a-fA-F]+;", fields[2])
+        ):
+            line = re.sub(r"\bcch=[0-9a-fA-F]+;", "cch=<volatile-cch>;", line, count=1)
+            value = intro + gap + line + newline + rest
+    return value
 
 
 def _guard(node, policy):
