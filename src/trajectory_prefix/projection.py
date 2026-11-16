@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any
@@ -20,7 +21,7 @@ def digest(value: bytes) -> bytes:
 
 @dataclass(frozen=True)
 class Policy:
-    rules: tuple[str, ...] = ()
+    rules: tuple[str, ...] = ("billing_cch",)
     anonymous_min_messages: int = 6
     anonymous_min_chars: int = 1024
 
@@ -69,6 +70,16 @@ METADATA_PROVENANCE = {
     "sub_session_id",
 }
 SENTINELS = {"", "no_session_id", "no_user_id", "null", "none", "unknown"}
+BILLING_CCH = re.compile(r"\A(x-anthropic-billing-header:[^\n]*?\bcch=)[0-9a-fA-F]+(?=;)")
+
+
+def normalize_header(text: str, policy: Policy, changes: set[str]) -> str:
+    if "billing_cch" in policy.rules:
+        normalized = BILLING_CCH.sub(r"\g<1><volatile-cch>", text)
+        if normalized != text:
+            changes.add("billing_cch")
+        return normalized
+    return text
 
 
 def identity(value: Any) -> str:
@@ -111,6 +122,8 @@ def project(node: dict[str, Any], dataset: str, date: str, policy: Policy = Poli
             for k, v in message.items()
             if k not in {"reasoning_content", "reasoning_details", "reasoning"}
         }
+        if role in {"system", "developer"}:
+            value["content"] = normalize_header(value["content"], policy, changes)
         if role == "assistant" and not value.get("tool_calls"):
             value.pop("tool_calls", None)
         tokens.append(canonical(value))
@@ -130,6 +143,8 @@ def project(node: dict[str, Any], dataset: str, date: str, policy: Policy = Poli
         if issue.get("code") in {"metadata_session_id_masked", "metadata_user_id_masked"}:
             isolation = "redacted_identity"
     guard = {k: v for k, v in node.items() if k not in DERIVED | PROVENANCE | ASSETS | {"messages"}}
+    if isinstance(guard.get("instructions"), str):
+        guard["instructions"] = normalize_header(guard["instructions"], policy, changes)
     guard["metadata_extra"] = {k: v for k, v in md.items() if k not in METADATA_PROVENANCE}
     guard["is_subagent"] = bool((node.get("completeness") or {}).get("is_subagent"))
     assets = {}
