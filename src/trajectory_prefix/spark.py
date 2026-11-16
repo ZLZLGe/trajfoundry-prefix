@@ -12,7 +12,14 @@ from pathlib import Path
 
 from .engine import PrefixScan, Record
 from .projection import Policy, digest, project
-from .storage import Reader, StorageConfig, atomic_bytes, reference
+from .storage import (
+    Reader,
+    StorageConfig,
+    atomic_bytes,
+    file_sha256,
+    output_relative_path,
+    reference,
+)
 
 
 def partition_key(key):
@@ -50,7 +57,7 @@ def scan_partition(rows, policy, storage):
             scan.close()
 
 
-def publish_partition(rows, output, storage):
+def publish_partition(rows, output, storage, layout="flat"):
     reader = Reader(storage)
     count = size = 0
     root = Path(output)
@@ -59,7 +66,7 @@ def publish_partition(rows, output, storage):
         if row["status"] != "kept":
             continue
         ref = row["record"]
-        target = root / "trajectories" / ref["id"]
+        target = root / output_relative_path(ref, layout)
         if ref.get("local_path") and (
             Path(ref["local_path"]).resolve() == target.resolve()
             or root in Path(ref["local_path"]).resolve().parents
@@ -101,7 +108,26 @@ def run(
     policy=Policy(),
     storage=StorageConfig(),
     check_only=False,
+    output_layout="flat",
+    reuse_decisions: Path | None = None,
 ):
+    if output_layout not in {"flat", "hash2"}:
+        raise ValueError("Unknown output layout")
+    input_plan_sha = file_sha256(input_plan)
+    prior = None
+    if reuse_decisions is not None:
+        if check_only:
+            raise ValueError("A full comparison check cannot reuse previous decisions")
+        reuse_decisions = reuse_decisions.resolve()
+        if not (reuse_decisions / "decisions/_SUCCESS").is_file():
+            raise RuntimeError("Previous decisions have not completed")
+        prior = json.loads((reuse_decisions / "decision-report.json").read_text())
+        if prior["policy"] != json.loads(json.dumps(asdict(policy))):
+            raise ValueError("Reused decisions require the identical comparison policy")
+        if Path(prior["input_plan"]).resolve() != input_plan.resolve():
+            raise ValueError("Reused decisions require the identical input plan")
+        if prior.get("input_plan_sha256") != input_plan_sha:
+            raise ValueError("Reused decisions require the unchanged input plan bytes")
     output = output.resolve()
     if str(output).startswith(("s3:", "s3a:")):
         raise ValueError("This program writes only to a local/shared filesystem")
@@ -128,14 +154,19 @@ def run(
     )
     if distinct_count != input_count:
         raise ValueError("Input plan contains duplicate dataset/date/path references")
-    projected = inputs.mapPartitions(lambda rows: project_partition(rows, policy, storage))
-    sorted_rows = projected.repartitionAndSortWithinPartitions(
-        partitions, partitionFunc=partition_key
-    )
     decisions_path = output / "decisions"
-    sorted_rows.mapPartitions(lambda rows: scan_partition(rows, policy, storage)).saveAsTextFile(
-        str(decisions_path)
-    )
+    if reuse_decisions is None:
+        projected = inputs.mapPartitions(lambda rows: project_partition(rows, policy, storage))
+        sorted_rows = projected.repartitionAndSortWithinPartitions(
+            partitions, partitionFunc=partition_key
+        )
+        sorted_rows.mapPartitions(
+            lambda rows: scan_partition(rows, policy, storage)
+        ).saveAsTextFile(str(decisions_path))
+    else:
+        sc.textFile(str(reuse_decisions / "decisions"), minPartitions=partitions).saveAsTextFile(
+            str(decisions_path)
+        )
     decisions = sc.textFile(str(decisions_path), minPartitions=partitions)
     counts = dict(
         decisions.mapPartitions(aggregate_counts).reduceByKey(lambda a, b: a + b).collect()
@@ -148,19 +179,29 @@ def run(
         "spark_master": sc.master,
         "policy": asdict(policy),
         "input_plan": str(input_plan.resolve()),
+        "input_plan_sha256": input_plan_sha,
         "input_count": input_count,
         "kept_count": kept_count,
         "removed_count": input_count - kept_count,
+        "output_layout": output_layout,
         "counts": {
             source: {field: n for (s, field), n in counts.items() if s == source}
             for source in sorted({s for s, _ in counts})
         },
     }
+    if prior is not None:
+        for field in ("input_count", "kept_count", "removed_count", "counts"):
+            if report[field] != prior[field]:
+                raise RuntimeError("Copied decisions do not agree with their completed receipt")
+        report["decisions_reused_from"] = str(reuse_decisions)
+    (output / "decision-report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+    )
     if check_only:
         report["check_only"] = True
         return finish(output, report)
     results = decisions.mapPartitions(
-        lambda rows: publish_partition(rows, str(output), storage)
+        lambda rows: publish_partition(rows, str(output), storage, output_layout)
     ).collect()
     kept_count, kept_bytes = sum(x[0] for x in results), sum(x[1] for x in results)
     if kept_count != counts.get(("all", "kept"), 0):
@@ -187,7 +228,7 @@ def run(
                         continue
                     ref = row["record"]
                     file = {
-                        "path": "trajectories/" + ref["id"],
+                        "path": output_relative_path(ref, output_layout),
                         "bytes": ref["bytes"],
                         "sha256": ref["sha256"],
                     }

@@ -6,7 +6,7 @@ from collections import Counter
 from pathlib import Path
 
 from .projection import canonical, covers, project
-from .storage import Reader, StorageConfig, atomic_bytes, reference
+from .storage import Reader, StorageConfig, atomic_bytes, output_relative_path, reference
 
 
 def difference(short, long, common):
@@ -50,7 +50,7 @@ def difference(short, long, common):
     return result
 
 
-def review_files(paths, source, output, policy):
+def review_files(paths, source, output, policy, layout="flat"):
     reader = Reader(StorageConfig())
     counts = Counter()
     for path in paths:
@@ -63,7 +63,7 @@ def review_files(paths, source, output, policy):
                 if row["status"] != "kept":
                     continue
                 ref = reference(row["record"])
-                local = dict(ref, local_path=str(Path(source) / "trajectories" / ref["id"]))
+                local = dict(ref, local_path=str(Path(source) / output_relative_path(ref, layout)))
                 local.pop("uri", None)
                 p = project(reader.node(local), ref["dataset"], ref["date"], policy)
                 for group in ("all", ref["dataset"]):

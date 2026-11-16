@@ -81,6 +81,38 @@ def test_spark_keeps_original_bytes_and_rechecks_output(spark, tmp_path):
     assert sum(d["status"] == "removed" for d in decisions) == 2
     for e in plan:
         assert hashlib.sha256(Path(e["local_path"]).read_bytes()).hexdigest() == e["sha256"]
+    relocated = tmp_path / "sharded"
+    published = run(
+        spark, p, relocated, partitions=2, output_layout="hash2", reuse_decisions=output
+    )
+    assert published["input_count"] == 3 and published["removed_count"] == 2
+    assert published["output_bytes"] == result["output_bytes"]
+    new_manifest = json.loads((relocated / "manifest.json").read_text())
+    old_payloads = sorted((output / e["path"]).read_bytes() for e in manifest["files"])
+    new_payloads = sorted((relocated / e["path"]).read_bytes() for e in new_manifest["files"])
+    assert old_payloads == new_payloads
+    assert all(len(Path(e["path"]).parts) == 5 for e in new_manifest["files"])
+    for line in (relocated / "retained-input.jsonl").read_text().splitlines():
+        e = json.loads(line)
+        assert Path(e["local_path"]).read_bytes() in old_payloads
+    from test_audit import audit
+
+    assert audit.verify_metadata(relocated, published) == hashlib.sha256(
+        (relocated / "manifest.json").read_bytes()
+    ).hexdigest()
+    from dataclasses import replace
+
+    from trajectory_prefix.projection import Policy
+
+    with pytest.raises(ValueError, match="identical comparison policy"):
+        run(
+            spark,
+            p,
+            tmp_path / "bad-reuse",
+            partitions=2,
+            reuse_decisions=output,
+            policy=replace(Policy(), rules=()),
+        )
 
 
 def test_header_review_verifies_actual_bodies_without_publishing_trajectories(spark, tmp_path):

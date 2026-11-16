@@ -27,6 +27,11 @@ def main():
     parser.add_argument("--s3-region", default="us-east-1")
     parser.add_argument("--s3-credentials-file")
     parser.add_argument("--cache-dir")
+    parser.add_argument("--output-layout", choices=("flat", "hash2"), default="flat")
+    parser.add_argument(
+        "--reuse-decisions", type=Path,
+        help="Publish completed decisions again without repeating the prefix comparison",
+    )
     parser.add_argument(
         "--check-only", action="store_true",
         help="Compare every input and write decisions without copying retained trajectories",
@@ -42,6 +47,8 @@ def main():
         parser.error("--partitions must be positive")
     if args.check_only and args.review_headers:
         parser.error("Choose either --check-only or --review-headers")
+    if args.reuse_decisions and (args.check_only or args.review_headers):
+        parser.error("Review modes must read and compare the actual input again")
     rules = tuple(filter(None, args.rules.split(",")))
     if set(rules) - set(Policy().rules):
         parser.error("Unknown comparison rule")
@@ -72,6 +79,8 @@ def main():
                 args.s3_endpoint, args.s3_region, args.s3_credentials_file, args.cache_dir
             ),
             check_only=args.check_only,
+            output_layout=args.output_layout,
+            reuse_decisions=args.reuse_decisions,
         )
         print(json.dumps(report, ensure_ascii=False), flush=True)
     finally:

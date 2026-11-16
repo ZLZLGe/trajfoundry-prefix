@@ -47,6 +47,24 @@ def reference(entry: dict) -> dict:
     return result
 
 
+def output_relative_path(entry: dict, layout="flat") -> str:
+    ref = reference(entry)
+    if layout == "flat":
+        return "trajectories/" + ref["id"]
+    if layout == "hash2":
+        shard = hashlib.sha256(ref["id"].encode()).hexdigest()[:2]
+        return "/".join(("trajectories", ref["dataset"], ref["date"], shard, ref["path"]))
+    raise ValueError("Unknown output layout")
+
+
+def file_sha256(path: Path) -> str:
+    value = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(4 * 1024 * 1024), b""):
+            value.update(chunk)
+    return value.hexdigest()
+
+
 def credentials(path: str) -> dict:
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:

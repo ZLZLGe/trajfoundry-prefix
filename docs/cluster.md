@@ -53,6 +53,10 @@ Executor 临时文件与 SQLite 都使用 Pod 本地磁盘；代码、输入清�
 
 `--check-only` 可用于对保留结果再比较一遍：仍处理输入清单中的每条完整轨迹，只写决策和报告，不再复制轨迹文件。它要求 `--input-plan`，不能与 `--probe` 或 `--audit-run` 组合。具体核验顺序见 [validation.md](validation.md)。
 
+百万级文件建议加 `--output-layout hash2`，输出路径为 `trajectories/渠道/日期/两位哈希/原文件名`。每个日期最多 256 个子目录，避免所有 Executor 同时向单个目录创建小文件。哈希只决定文件位置，轨迹字节和原文件名不变；manifest 和保留输入清单指向真实路径，核验器兼容两种布局。默认 `flat` 保留原目录形式。
+
+比较完成后会写入独立的 `decision-report.json`。若后面的文件写出被中断，可在新输出目录加 `--reuse-decisions /share/project/runs/data-01` 复用已完成的 `decisions/`，只重新写出结果。程序要求决策目录存在 `_SUCCESS`，输入清单路径和 SHA256、比较策略以及复制后的全量计数都相符。后续仍必须独立核验实际输出和每条删除依据。此模式不用于第二遍去重检查，`--check-only` 和 `--review-headers` 始终重新处理全部输入。
+
 ## 目录
 
 ```text

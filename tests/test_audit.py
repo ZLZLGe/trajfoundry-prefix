@@ -8,7 +8,7 @@ from test_tool_ids import sample
 
 from trajectory_prefix.projection import Policy
 from trajectory_prefix.residuals import review_files
-from trajectory_prefix.storage import StorageConfig, reference
+from trajectory_prefix.storage import StorageConfig, output_relative_path, reference
 
 spec = importlib.util.spec_from_file_location(
     "prefix_audit", Path(__file__).parents[1] / "scripts/audit.py"
@@ -33,18 +33,19 @@ def input_ref(tmp_path, name, node):
     )
 
 
-def test_audit_proves_actual_output_and_rejects_cache_as_missing_output(tmp_path):
+@pytest.mark.parametrize("layout", ["flat", "hash2"])
+def test_audit_proves_actual_output_and_rejects_cache_as_missing_output(tmp_path, layout):
     a = input_ref(tmp_path, "a.json", sample("a"))
     b = input_ref(tmp_path, "b.json", sample("b", True))
     source = tmp_path / "run"
-    output = source / "trajectories" / b["id"]
+    output = source / output_relative_path(b, layout)
     output.parent.mkdir(parents=True)
     output.write_bytes(Path(b["local_path"]).read_bytes())
     decisions = [
         json.dumps({"status": "removed", "record": a, "retained": b}),
         json.dumps({"status": "kept", "record": b}),
     ]
-    counts = dict(audit.verify_partition(decisions, str(source), StorageConfig(), Policy()))
+    counts = dict(audit.verify_partition(decisions, str(source), StorageConfig(), Policy(), layout))
     assert counts[("all", "witness_verified")] == counts[("all", "output_hash_verified")] == 1
     assert counts[("all", "required:tool_id_alpha")] == 1
     cache = tmp_path / "cache"
@@ -54,7 +55,7 @@ def test_audit_proves_actual_output_and_rejects_cache_as_missing_output(tmp_path
     with pytest.raises(ValueError, match="unavailable locally"):
         list(
             audit.verify_partition(
-                decisions, str(source), StorageConfig(cache_dir=str(cache)), Policy()
+                decisions, str(source), StorageConfig(cache_dir=str(cache)), Policy(), layout
             )
         )
 
@@ -73,7 +74,8 @@ def test_audit_rejects_incorrect_semantic_witness_even_with_valid_hashes(tmp_pat
         list(audit.verify_partition([line], str(source), StorageConfig(), Policy()))
 
 
-def test_residual_review_reports_real_message_difference_without_merging(tmp_path):
+@pytest.mark.parametrize("layout", ["flat", "hash2"])
+def test_residual_review_reports_real_message_difference_without_merging(tmp_path, layout):
     source = tmp_path / "run"
     decisions = []
     for name, answer in (("a", "branch one"), ("b", "branch two")):
@@ -89,14 +91,14 @@ def test_residual_review_reports_real_message_difference_without_merging(tmp_pat
             ],
         }
         ref = input_ref(tmp_path, name + ".json", node)
-        dest = source / "trajectories" / ref["id"]
+        dest = source / output_relative_path(ref, layout)
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(Path(ref["local_path"]).read_bytes())
         decisions.append(json.dumps({"status": "kept", "record": ref}))
     part = tmp_path / "part-00000"
     part.write_text("\n".join(decisions) + "\n")
     output = tmp_path / "audit"
-    counts = dict(review_files([str(part)], str(source), str(output), Policy()))
+    counts = dict(review_files([str(part)], str(source), str(output), Policy(), layout))
     assert counts[("all", "retained_reviewed")] == 2
     assert counts[("all", "category:assistant->assistant:content")] == 1
     samples = json.loads((output / "near-prefix-samples/part-00000.json").read_text())

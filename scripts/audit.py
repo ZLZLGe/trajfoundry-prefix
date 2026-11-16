@@ -11,7 +11,7 @@ from pyspark.sql import SparkSession
 
 from trajectory_prefix.projection import Policy
 from trajectory_prefix.residuals import review_files
-from trajectory_prefix.storage import Reader, StorageConfig, reference
+from trajectory_prefix.storage import Reader, StorageConfig, output_relative_path, reference
 from trajectory_prefix.verification import raw_covers
 
 
@@ -20,7 +20,7 @@ def identity(entry):
     return r["id"], (r["bytes"], r["sha256"])
 
 
-def verify_partition(lines, source, storage, policy):
+def verify_partition(lines, source, storage, policy, layout="flat"):
     reader = Reader(storage)
     output_reader = Reader(StorageConfig())
     counts = Counter()
@@ -33,7 +33,7 @@ def verify_partition(lines, source, storage, policy):
             counts[(g, "input")] += 1
             counts[(g, decision["status"])] += 1
         if decision["status"] == "kept":
-            target = dict(ref, local_path=str(Path(source) / "trajectories" / ref["id"]))
+            target = dict(ref, local_path=str(Path(source) / output_relative_path(ref, layout)))
             # Disallow S3 fallback when proving that the output actually exists.
             target.pop("uri", None)
             output_reader.read(target)
@@ -41,7 +41,9 @@ def verify_partition(lines, source, storage, policy):
                 counts[(g, "output_hash_verified")] += 1
         elif decision["status"] == "removed":
             retained = reference(decision["retained"])
-            target = dict(retained, local_path=str(Path(source) / "trajectories" / retained["id"]))
+            target = dict(
+                retained, local_path=str(Path(source) / output_relative_path(retained, layout))
+            )
             target.pop("uri", None)
             short, long = reader.node(ref), output_reader.node(target)
             if not raw_covers(short, long, ref, retained, policy):
@@ -84,7 +86,7 @@ def verify_metadata(source, report):
                     continue
                 ref = reference(row["record"])
                 file = {
-                    "path": "trajectories/" + ref["id"],
+                    "path": output_relative_path(ref, report.get("output_layout", "flat")),
                     "bytes": ref["bytes"],
                     "sha256": ref["sha256"],
                 }
@@ -129,6 +131,7 @@ def main():
     policy_config["rules"] = tuple(policy_config["rules"])
     policy_config.setdefault("extra_information", "preserve_all")
     policy = Policy(**policy_config)
+    layout = initial.get("output_layout", "flat")
     storage = StorageConfig(a.s3_endpoint, a.s3_region, a.s3_credentials_file, a.cache_dir)
     manifest_sha = verify_metadata(source, initial)
     spark = SparkSession.builder.appName("trajectory-prefix-audit").getOrCreate()
@@ -182,7 +185,7 @@ def main():
             raise RuntimeError("Deletion points to a non-retained or different witness")
         counts = dict(
             decisions.mapPartitions(
-                lambda rows: verify_partition(rows, str(source), storage, policy)
+                lambda rows: verify_partition(rows, str(source), storage, policy, layout)
             )
             .reduceByKey(lambda x, y: x + y)
             .collect()
@@ -195,7 +198,9 @@ def main():
         parts = [str(path) for path in sorted((source / "decisions").glob("part-*"))]
         residual = dict(
             sc.parallelize(parts, min(a.partitions, len(parts)) or 1)
-            .mapPartitions(lambda paths: review_files(paths, str(source), str(output), policy))
+            .mapPartitions(
+                lambda paths: review_files(paths, str(source), str(output), policy, layout)
+            )
             .reduceByKey(lambda x, y: x + y)
             .collect()
         )

@@ -109,11 +109,15 @@ def command(
     input_cache=True,
     check_only=False,
     review_headers=False,
+    output_layout="flat",
+    reuse_decisions=None,
 ):
     if (check_only or review_headers) and (probe or audit_run):
         raise ValueError("Comparison checks require --input-plan")
     if check_only and review_headers:
         raise ValueError("Choose either --check-only or --review-headers")
+    if reuse_decisions and (check_only or review_headers or probe or audit_run):
+        raise ValueError("Only output publication may reuse previous decisions")
     if not config["master"].startswith("k8s://https://"):
         raise ValueError("Cluster submission requires Kubernetes HTTPS")
     if not config["queue"]:
@@ -208,7 +212,9 @@ def command(
         if rules is not None and not audit_run:
             result += ["--rules", rules]
         if not audit_run:
-            result += ["--extra-information", extra_information]
+            result += ["--extra-information", extra_information, "--output-layout", output_layout]
+        if reuse_decisions:
+            result += ["--reuse-decisions", str(reuse_decisions)]
         if check_only:
             result += ["--check-only"]
         if review_headers:
@@ -244,6 +250,8 @@ def main():
     p.add_argument("--executor-cores", type=int, default=8)
     p.add_argument("--partitions", type=int, default=512)
     p.add_argument("--rules")
+    p.add_argument("--output-layout", choices=("flat", "hash2"), default="flat")
+    p.add_argument("--reuse-decisions")
     p.add_argument(
         "--extra-information", choices=("tools_only", "preserve_all"), default="tools_only"
     )
@@ -275,10 +283,18 @@ def main():
         p.error("Comparison checks require --input-plan")
     if a.check_only and a.review_headers:
         p.error("Choose either --check-only or --review-headers")
+    if a.reuse_decisions and (not a.input_plan or a.check_only or a.review_headers):
+        p.error("Only output publication with --input-plan may reuse previous decisions")
     audit_run = shared_path(a.audit_run, c["shared_root"]) if a.audit_run else None
     if audit_run and not (audit_run / "SUCCEEDED").is_file():
         p.error("Audit source run has not completed")
     input_plan = shared_path(a.input_plan, c["shared_root"]) if a.input_plan else None
+    reuse_decisions = shared_path(a.reuse_decisions, c["shared_root"]) if a.reuse_decisions else None
+    if reuse_decisions and not (
+        (reuse_decisions / "decisions/_SUCCESS").is_file()
+        and (reuse_decisions / "decision-report.json").is_file()
+    ):
+        p.error("Reused decisions require completed output and a decision receipt")
     if input_plan and not input_plan.is_file():
         p.error("Input plan does not exist")
     pod, cmd = command(
@@ -296,6 +312,8 @@ def main():
         input_cache=not a.no_input_cache,
         check_only=a.check_only,
         review_headers=a.review_headers,
+        output_layout=a.output_layout,
+        reuse_decisions=reuse_decisions,
     )
     templates = {
         r: pod_template(c, control, output, driver=r == "driver", pod=pod)
