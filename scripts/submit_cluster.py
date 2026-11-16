@@ -106,6 +106,7 @@ def command(
     executor_cores=8,
     rules=None,
     extra_information="tools_only",
+    input_cache=True,
 ):
     if not config["master"].startswith("k8s://https://"):
         raise ValueError("Cluster submission requires Kubernetes HTTPS")
@@ -195,9 +196,9 @@ def command(
             config["s3_region"],
             "--s3-credentials-file",
             config["s3_credentials_file"],
-            "--cache-dir",
-            LOCAL_DIR + "/input-cache",
         ]
+        if input_cache:
+            result += ["--cache-dir", LOCAL_DIR + "/input-cache"]
         if rules is not None and not audit_run:
             result += ["--rules", rules]
         if not audit_run:
@@ -236,6 +237,10 @@ def main():
     p.add_argument(
         "--extra-information", choices=("tools_only", "preserve_all"), default="tools_only"
     )
+    p.add_argument(
+        "--no-input-cache", action="store_true",
+        help="Read verified inputs without retaining a copy in each Pod's scratch directory",
+    )
     p.add_argument("--execute", action="store_true")
     a = p.parse_args()
     c = json.loads(a.config.read_text())
@@ -266,6 +271,7 @@ def main():
         partitions=a.partitions,
         rules=a.rules,
         extra_information=a.extra_information,
+        input_cache=not a.no_input_cache,
     )
     templates = {
         r: pod_template(c, control, output, driver=r == "driver", pod=pod)
