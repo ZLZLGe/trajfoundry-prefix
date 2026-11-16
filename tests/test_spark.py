@@ -81,3 +81,45 @@ def test_spark_keeps_original_bytes_and_rechecks_output(spark, tmp_path):
     assert sum(d["status"] == "removed" for d in decisions) == 2
     for e in plan:
         assert hashlib.sha256(Path(e["local_path"]).read_bytes()).hexdigest() == e["sha256"]
+
+
+def test_header_review_verifies_actual_bodies_without_publishing_trajectories(spark, tmp_path):
+    from trajectory_prefix.header_review import run as review_headers
+    from trajectory_prefix.projection import Policy
+
+    plan = []
+    for index, header in enumerate(["instruction A", "instruction B", "instruction C"]):
+        body = [
+            {"role": "system", "content": header},
+            {"role": "user", "content": "question" if index < 2 else "different question"},
+            {"role": "assistant", "content": "answer"},
+            {"role": "user", "content": "continue"},
+            {"role": "assistant", "content": "done"},
+        ]
+        data = json.dumps(
+            {"model": "m", "metadata": {"session_id": "s"}, "messages": body}
+        ).encode()
+        path = tmp_path / f"input-{index}.jsonl"
+        path.write_bytes(data)
+        plan.append(
+            {
+                "dataset": "test",
+                "date": "2026-10-10",
+                "path": path.name,
+                "local_path": str(path),
+                "bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+            }
+        )
+    input_plan = tmp_path / "plan.jsonl"
+    input_plan.write_text("".join(json.dumps(row) + "\n" for row in plan))
+    output = tmp_path / "headers"
+    result = review_headers(spark, input_plan, output, partitions=2, policy=Policy())
+    assert result["input_count"] == 3 and result["eligible_count"] == 3
+    assert result["candidate_groups"] == 1 and result["records_in_candidate_groups"] == 2
+    sample = json.loads((output / "sample.json").read_text())
+    assert len(sample) == 1 and sample[0]["verified_equal_body_pair"]
+    assert not any(sample[0]["equal_after_header_transform"].values())
+    assert not (output / "trajectories").exists() and not (output / "manifest.json").exists()
+    for row in plan:
+        assert hashlib.sha256(Path(row["local_path"]).read_bytes()).hexdigest() == row["sha256"]

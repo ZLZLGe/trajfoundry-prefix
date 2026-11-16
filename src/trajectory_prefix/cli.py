@@ -31,11 +31,17 @@ def main():
         "--check-only", action="store_true",
         help="Compare every input and write decisions without copying retained trajectories",
     )
+    parser.add_argument(
+        "--review-headers", action="store_true",
+        help="Review retained equal message bodies with different leading system/developer text",
+    )
     args = parser.parse_args()
     if "://" in args.output or not Path(args.output).is_absolute():
         parser.error("--output must be an absolute local/shared filesystem path")
     if args.partitions < 1:
         parser.error("--partitions must be positive")
+    if args.check_only and args.review_headers:
+        parser.error("Choose either --check-only or --review-headers")
     rules = tuple(filter(None, args.rules.split(",")))
     if set(rules) - set(Policy().rules):
         parser.error("Unknown comparison rule")
@@ -47,6 +53,15 @@ def main():
     spark = builder.getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
     try:
+        if args.review_headers:
+            from .header_review import run as review_headers
+
+            report = review_headers(
+                spark, args.input_plan, Path(args.output), partitions=args.partitions,
+                policy=Policy(rules, extra_information=args.extra_information),
+            )
+            print(json.dumps(report, ensure_ascii=False), flush=True)
+            return
         report = run(
             spark,
             args.input_plan,

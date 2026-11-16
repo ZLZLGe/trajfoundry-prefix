@@ -108,9 +108,12 @@ def command(
     extra_information="tools_only",
     input_cache=True,
     check_only=False,
+    review_headers=False,
 ):
-    if check_only and (probe or audit_run):
-        raise ValueError("--check-only requires --input-plan")
+    if (check_only or review_headers) and (probe or audit_run):
+        raise ValueError("Comparison checks require --input-plan")
+    if check_only and review_headers:
+        raise ValueError("Choose either --check-only or --review-headers")
     if not config["master"].startswith("k8s://https://"):
         raise ValueError("Cluster submission requires Kubernetes HTTPS")
     if not config["queue"]:
@@ -208,6 +211,8 @@ def command(
             result += ["--extra-information", extra_information]
         if check_only:
             result += ["--check-only"]
+        if review_headers:
+            result += ["--review-headers"]
     return pod, result
 
 
@@ -250,6 +255,10 @@ def main():
         "--check-only", action="store_true",
         help="Compare all inputs without making another copy of the retained trajectories",
     )
+    p.add_argument(
+        "--review-headers", action="store_true",
+        help="Review retained equal bodies with different leading instructions",
+    )
     p.add_argument("--execute", action="store_true")
     a = p.parse_args()
     c = json.loads(a.config.read_text())
@@ -262,8 +271,10 @@ def main():
         p.error("Resources and partitions must be positive")
     if sum(bool(x) for x in (a.probe, a.input_plan, a.audit_run)) != 1:
         p.error("Choose exactly one of --input-plan, --probe, --audit-run")
-    if a.check_only and not a.input_plan:
-        p.error("--check-only requires --input-plan")
+    if (a.check_only or a.review_headers) and not a.input_plan:
+        p.error("Comparison checks require --input-plan")
+    if a.check_only and a.review_headers:
+        p.error("Choose either --check-only or --review-headers")
     audit_run = shared_path(a.audit_run, c["shared_root"]) if a.audit_run else None
     if audit_run and not (audit_run / "SUCCEEDED").is_file():
         p.error("Audit source run has not completed")
@@ -284,6 +295,7 @@ def main():
         extra_information=a.extra_information,
         input_cache=not a.no_input_cache,
         check_only=a.check_only,
+        review_headers=a.review_headers,
     )
     templates = {
         r: pod_template(c, control, output, driver=r == "driver", pod=pod)

@@ -27,4 +27,24 @@ TB 规模的第二遍可加 `--check-only --no-input-cache`。它仍重新读取
 
 核验作业还逐个读取保留文件，检查原排序分区中相邻记录：短记录至少 4 条消息、共同前缀达到短记录的 80% 时，记录差异类别，并在 `near-prefix-samples/` 保存有界样例。统计单位是候选对，不是去重后的轨迹数；样例中的消息是用于比较的投影片段。该方法用于寻找待人工核对的边界，不据此自动删除记录，也不能发现所有首两条消息不同的情况。
 
+## 开头指令差异的补充检查
+
+对实际保留结果使用 `--review-headers`，可检查另一类候选：同一原比较组内，去掉开头连续的 system/developer 消息后，至少四条正文消息完全一致，工具定义及其他所选保护条件一致，但开头指令不同。
+
+```bash
+.venv/bin/python scripts/submit_cluster.py \
+  --config /share/project/private/cluster.json \
+  --control /share/project/runs/control-headers-01 \
+  --output /share/project/runs/headers-01 \
+  --input-plan /share/project/runs/data-01/retained-input.jsonl \
+  --review-headers --no-input-cache \
+  --executors 8 --executor-cores 8 --partitions 1024 --execute
+```
+
+本检查重新读取清单中的每个已落盘文件，校验原字节和 SHA256。哈希只挑候选，再从每个候选组中挑两个不同开头的代表文件，重新读取实际文件、精确核对正文及工具定义。每组最多保留两个代表，不把整个大组装入内存。
+
+`candidates/` 保存验证后的候选组及原文件引用，`sample.json` 保存按固定哈希选出的最多 300 组，`report.json` 给出组数与涉及条数。报告还检查两个代表的开头差异能否仅由尾部 ASCII 空白、CRLF 或首行 billing header 解释；这些标记可以重叠。
+
+候选组数和涉及条数都不是可删除数量。真实指令变化也会进入候选，必须检查实际含义才能决定是否增加规则。此检查只写独立核验材料，不删除或复制轨迹，不放宽正式去重策略；它只覆盖正文完全一致的情况，不穷尽长短前缀的开头差异。
+
 测试比例以实际进入本次测试的记录为分母。每日渠道采用固定文件名家族抽样，保留选中的完整家族；没有真实 session 的哈希文件名不能证明覆盖了同一隐含会话的全部文件，因此不能把样本比例直接推广到渠道全量。
