@@ -97,7 +97,9 @@ def run(
     sc = spark.sparkContext
     if not sc.master.startswith("local") and str(output).startswith(("/tmp/", "/home/")):
         raise ValueError("Cluster mode needs a shared output directory visible to all executors")
-    code_zip = output / "package.zip"
+    # Cluster mode rejects registering the same archive basename from another
+    # path when a second pass runs in the same SparkContext.
+    code_zip = output / ("package-" + digest(str(output).encode()).hex()[:16] + ".zip")
     package = Path(__file__).parent
     with zipfile.ZipFile(code_zip, "w", zipfile.ZIP_DEFLATED) as z:
         for path in sorted(package.glob("*.py")):

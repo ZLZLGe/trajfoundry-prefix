@@ -1,0 +1,72 @@
+# Cluster 提交与输出
+
+这里的业务验证由当前机器运行 `spark-submit --deploy-mode cluster`，Driver 和 Executor 均在 Kubernetes 中运行，使用配置中的用户队列。`local[2]` 只用于小型单元／集成测试。
+
+每次提交复制 `src/` 和 `scripts/` 到独立控制目录，记录每个文件的 SHA256。运行期间修改开发目录不会改变已经提交的作业。无需导入、安装或修改旧 TrajFoundry 生产项目。
+
+## 环境配置
+
+配置 JSON 放在仓库外，包含以下键。认证参数均为文件路径，不能填写密钥值。
+
+| 键 | 含义 |
+|---|---|
+| `master`, `namespace`, `queue` | Kubernetes HTTPS API、命名空间、用户队列；队列同时用于 Driver 和 Executor 标签 |
+| `service_account`, `ca_cert`, `oauth_token_file` | Pod ServiceAccount、提交侧 CA 和 Token 文件；保留 TLS 校验 |
+| `spark_submit`, `submit_java_home` | 提交机器上的 Spark 和 Java 路径 |
+| `image`, `pod_template`, `container_name` | Spark 镜像、带共享卷的 JSON Pod 模板、应用容器名 |
+| `shared_root` | Driver、Executor 和提交机都能访问的共享目录根路径 |
+| `uid`, `gid`, `arm_python` | Pod 身份和 ARM Python 3.11；环境需有 `orjson`、`boto3` |
+| `s3_endpoint`, `s3_region`, `s3_credentials_file` | S3 只读输入配置；凭据文件由 Pod 用户持有，权限 0400 或 0600 |
+| `extra_listener` | 可选，平台的 Spark Listener 类名 |
+
+Executor 临时文件与 SQLite 都使用 Pod 本地磁盘；代码、输入清单和最终结果使用共享目录。输入可由 Executor 直接从 S3 获取，按清单的字节数和 SHA256 校验，并缓存在当前 Pod 的临时目录中。只允许 S3 GetObject，没有 S3 写入操作。
+
+## 提交命令
+
+先验证共享目录、ARM 环境、字节保留、两次去重；这里的路径仅为示例，替换为自己的共享目录。
+
+```bash
+.venv/bin/python scripts/submit_cluster.py \
+  --config /share/project/private/cluster.json \
+  --control /share/project/runs/control-probe-01 \
+  --output /share/project/runs/probe-01 \
+  --probe --executors 2 --executor-cores 1 --execute
+```
+
+真实数据运行：
+
+```bash
+.venv/bin/python scripts/submit_cluster.py \
+  --config /share/project/private/cluster.json \
+  --control /share/project/runs/control-data-01 \
+  --output /share/project/runs/data-01 \
+  --input-plan /share/project/input.jsonl \
+  --executors 16 --executor-cores 8 --partitions 1024 --execute
+```
+
+不加 `--execute` 只生成计划和代码快照；真正执行请用新的控制和输出目录重新提交。程序拒绝复用已有输出目录，失败产物保留供排查。提交脚本会检查 Driver Pod 是否 Succeeded，不能只根据 `spark-submit` 的退出码判断任务成功。
+
+## 目录
+
+```text
+control-data-01/
+  app/                       # 本次代码快照
+  source-hashes.json          # 快照文件校验
+  driver-pod.json
+  executor-pod.json
+  plan.json                  # 队列、命令、输入输出路径
+  driver.log
+  submit.log
+  eventLog/
+  final.json                 # Driver 与输出完成证据
+data-01/
+  trajectories/渠道/日期/原文件名
+  manifest.json              # trajectory_count、total_bytes、files
+  retained-input.jsonl       # 可直接用于第二遍检查的输入清单
+  decisions/                 # 每条输入的保留／移除决定及最终见证文件
+  report.json                # 计数、规则、Spark 版本
+  package-*.zip              # Spark 自动分发的代码包，不是数据压缩包
+  SUCCEEDED                  # 完成后才创建
+```
+
+`manifest.files` 每项只有 `path`、`bytes`、`sha256`。这些审计文件都独立于轨迹本身，轨迹字节不变。此 manifest 是新项目的输出清单；旧的 `run_s3_label_job` 还要求原标准化 manifest 和 lineage 契约，尚不能直接把此目录当作原调度节点输入。
