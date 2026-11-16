@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+.coverage
+spark-warehouse/
+metastore_db/
+derby.log
+*.log
+private/
+data/
+runs/
+
