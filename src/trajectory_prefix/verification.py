@@ -124,11 +124,40 @@ def raw_covers(short, long, short_ref, long_ref, policy=Policy()):
             map(encoded, long.get(field) or [])
         ):
             return False
-    if not short["messages"] or len(short["messages"]) > len(long["messages"]):
+
+    def messages(node):
+        seen = False
+        result = []
+        for original in node["messages"]:
+            item = _message(original, policy)
+            if item["role"] == "assistant" and (item["content"] or item.get("tool_calls")):
+                seen = True
+            if (
+                "empty_assistant" in policy.rules
+                and seen
+                and item == {"role": "assistant", "content": ""}
+                and set(original)
+                <= {
+                    "role",
+                    "content",
+                    "tool_calls",
+                    "reasoning_content",
+                    "reasoning_details",
+                    "reasoning",
+                }
+                and not any(
+                    original.get(k) for k in ("reasoning_content", "reasoning_details", "reasoning")
+                )
+            ):
+                continue
+            result.append(item)
+        return result
+
+    short_messages, long_messages = messages(short), messages(long)
+    if not short_messages or len(short_messages) > len(long_messages):
         return False
     bindings = {}
-    for a, b in zip(short["messages"], long["messages"]):
-        a, b = _message(a, policy), _message(b, policy)
+    for a, b in zip(short_messages, long_messages):
         if a["role"] != b["role"]:
             return False
         if "tool_id_alpha" in policy.rules:

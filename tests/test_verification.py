@@ -48,7 +48,7 @@ def test_raw_oracle_matches_projection_across_rules_and_boundary_mutations():
         edit(n)
         cases.append(n)
     rules = Policy().rules
-    for bitset in range(8):
+    for bitset in range(1 << len(rules)):
         policy = Policy(tuple(rule for i, rule in enumerate(rules) if bitset & (1 << i)))
         for n in cases:
             expected = covers(

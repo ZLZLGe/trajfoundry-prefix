@@ -21,7 +21,12 @@ def digest(value: bytes) -> bytes:
 
 @dataclass(frozen=True)
 class Policy:
-    rules: tuple[str, ...] = ("billing_cch", "assistant_trailing_space", "tool_id_alpha")
+    rules: tuple[str, ...] = (
+        "billing_cch",
+        "assistant_trailing_space",
+        "tool_id_alpha",
+        "empty_assistant",
+    )
     anonymous_min_messages: int = 6
     anonymous_min_chars: int = 1024
 
@@ -108,6 +113,7 @@ def project(node: dict[str, Any], dataset: str, date: str, policy: Policy = Poli
     isolation = ""
     bindings: dict[str, tuple[int, str]] = {}
     call_position = 0
+    seen_visible_assistant = False
     for message in node["messages"]:
         if not isinstance(message, dict) or not isinstance(message.get("content"), str):
             raise ValueError("Expected normalized messages with string content")
@@ -133,6 +139,30 @@ def project(node: dict[str, Any], dataset: str, date: str, policy: Policy = Poli
             value["content"] = trimmed
         if role == "assistant" and not value.get("tool_calls"):
             value.pop("tool_calls", None)
+        if role == "assistant":
+            if value["content"] or value.get("tool_calls"):
+                seen_visible_assistant = True
+            elif (
+                "empty_assistant" in policy.rules
+                and seen_visible_assistant
+                and set(message)
+                <= {
+                    "role",
+                    "content",
+                    "tool_calls",
+                    "reasoning_content",
+                    "reasoning_details",
+                    "reasoning",
+                }
+                and not any(
+                    message.get(k) for k in ("reasoning_content", "reasoning_details", "reasoning")
+                )
+            ):
+                # Replay may omit an entirely empty assistant envelope. Keep
+                # leading empty responses, reasoning-only turns, media and
+                # unknown extensions. Only the comparison sequence changes.
+                changes.add("empty_assistant")
+                continue
         if "tool_id_alpha" in policy.rules:
             if role == "assistant" and value.get("tool_calls"):
                 calls = []
@@ -166,7 +196,7 @@ def project(node: dict[str, Any], dataset: str, date: str, policy: Policy = Poli
     # content reuse for classification, not proof of an original session ID.
     if not session and not (user or end_user):
         if (
-            len(tokens) < policy.anonymous_min_messages
+            len(node["messages"]) < policy.anonymous_min_messages
             or meaningful_chars < policy.anonymous_min_chars
             or not roles["tool"]
         ):
