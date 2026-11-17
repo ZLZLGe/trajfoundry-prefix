@@ -212,10 +212,34 @@ def possible_pair(a, b):
 def group_candidates(item):
     _, rows = item
     rows = sorted(rows, key=priority)
+    # A selective necessary constraint avoids the all-pairs scan for large
+    # identities. Shorter sequences remain eligible at every later position.
+    from bisect import bisect_right
+    from collections import defaultdict
+    from itertools import chain
+
+    lengths = [-r["message_count"] for r in rows]
+    shapes, plain, masked = defaultdict(list), defaultdict(list), defaultdict(list)
+    for j, row in enumerate(rows):
+        for p, shape in enumerate(row["shapes"]):
+            shapes[p, shape].append(j)
+            if row["mask_flags"][p]:
+                masked[p, shape].append(j)
+            else:
+                plain[p, shape, row["hashes"][p]].append(j)
     for i, a in enumerate(rows):
         if not a["mask_count"]:
             continue
-        for j, b in enumerate(rows):
+        best, options = len(rows) + 1, None
+        for p, shape in enumerate(a["shapes"]):
+            end = bisect_right(lengths, -(p + 1))
+            buckets = ([shapes[p, shape]] if a["mask_flags"][p] else
+                       [plain[p, shape, a["hashes"][p]], masked[p, shape]])
+            count = sum(map(len, buckets)) + len(rows) - end
+            if count < best:
+                best, options = count, (*buckets, range(end, len(rows)))
+        for j in chain.from_iterable(options or []):
+            b = rows[j]
             if i == j or (b["mask_count"] and j < i):
                 continue
             changed = possible_pair(a, b)
