@@ -5,6 +5,7 @@ field without applying the masking matcher, and makes no semantic verdict.
 """
 import argparse
 import collections
+import hashlib
 import json
 import os
 import re
@@ -80,13 +81,56 @@ def select_examples(rows):
     return selections
 
 
+def select_long_examples(rows):
+    """Deterministic boundary sample, not a representative error-rate sample."""
+    selections = {}
+    for channel in sorted({r['record']['dataset'] for r in rows}):
+        candidates = [r for r in rows if r['record']['dataset'] == channel
+                      and r['message_counts'][0] > 6]
+        for lower, upper in [(7, 20), (21, 100), (101, float('inf'))]:
+            for has_session in [False, True]:
+                eligible = [r for r in candidates if lower <= r['message_counts'][0] <= upper
+                            and r['has_session'] == has_session]
+                if eligible:
+                    chosen = min(eligible, key=lambda r: hashlib.sha256(r['record']['id'].encode()).hexdigest())
+                    selections[chosen['record']['id']] = {**chosen, 'selection_reason':
+                        f'length_{lower}_{upper}_session_{has_session}'}
+        strata = [
+            ('earliest_user_difference', lambda r: any(d['role'] == 'user' for d in r['differences']),
+             lambda r: (min(d['message_index'] for d in r['differences'] if d['role'] == 'user'),
+                        r['message_counts'][0], r['record']['id'])),
+            ('most_changed_fields', lambda r: True,
+             lambda r: (-len(r['differences']), r['record']['id'])),
+            ('largest_field_length_imbalance', lambda r: True,
+             lambda r: (min(min(d['lengths']) / max(1, max(d['lengths'])) for d in r['differences']),
+                        r['record']['id'])),
+            ('smallest_changed_user_field', lambda r: any(d['role'] == 'user' for d in r['differences']),
+             lambda r: (min(min(d['lengths']) for d in r['differences'] if d['role'] == 'user'),
+                        r['record']['id'])),
+            ('rare_marker', lambda r: bool(set(r['necessary_labels']) &
+                                          {'<COOKIE>', '[REDACTED]', '[S76]', '[S82]', '<SENSITIVE>'}),
+             lambda r: (r['message_counts'][0], r['record']['id'])),
+            ('longest_removed_history', lambda r: True,
+             lambda r: (-r['message_counts'][0], r['record']['id'])),
+        ]
+        for name, predicate, key in strata:
+            eligible = [r for r in candidates if predicate(r) and r['record']['id'] not in selections]
+            if eligible:
+                chosen = min(eligible, key=key)
+                selections[chosen['record']['id']] = {**chosen, 'selection_reason': name}
+    return list(selections.values())
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--publication', type=Path, required=True)
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--only-short-extensions', action='store_true',
-                        help='Read every removal with at most six messages and a longer witness.')
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument('--only-short-extensions', action='store_true',
+                           help='Read every removal with at most six messages and a longer witness.')
+    selection.add_argument('--long-boundary-sample', action='store_true',
+                           help='Sample longer histories by length/session and selected difference boundaries.')
     args = parser.parse_args()
     os.umask(0o077)
     args.output.mkdir(parents=True, exist_ok=False)
@@ -101,7 +145,10 @@ def main():
         assert len(current) == report['mask_additional_removed']
         rows.extend(current)
     equal = [r for r in rows if r['message_counts'][0] == r['message_counts'][1]]
-    if args.only_short_extensions:
+    if args.long_boundary_sample:
+        selected = select_long_examples(rows)
+        wanted = {r['record']['id']: r for r in selected}
+    elif args.only_short_extensions:
         selected = []
         wanted = {r['record']['id']: r for r in rows if r['message_counts'][0] <= 6
                   and r['message_counts'][0] < r['message_counts'][1]}
@@ -146,12 +193,15 @@ def main():
     by_channel = collections.Counter(r['record']['dataset'] for r in equal_packets)
     whole = collections.Counter(r['record']['dataset'] for r in equal_packets if r['whole_assistant_marker_positions'])
     report = {'passed': True, 'local_only': True, 's3_writes': False,
-              'selection_scope': 'all_short_extensions' if args.only_short_extensions else 'all_equal_and_selected_extensions',
+              'selection_scope': ('long_boundary_sample' if args.long_boundary_sample else
+                                  'all_short_extensions' if args.only_short_extensions else
+                                  'all_equal_and_selected_extensions'),
               'all_mask_removals': len(rows), 'all_equal_length_removals': len(equal),
               'read_equal_length_pairs': len(equal_packets),
               'equal_length_by_channel': dict(by_channel), 'selected_manual_pairs': len(selected),
               'complete_pairs_read': len(packets), 'same_visible_assistants_equal_length_pairs':
               sum(p['all_visible_assistants_equal'] for p in equal_packets),
+              'read_pairs_by_channel': dict(collections.Counter(p['record']['dataset'] for p in packets)),
               'whole_assistant_marker_equal_length_by_channel': dict(whole),
               'limitation': 'Hidden values cannot be reconstructed from placeholders. No automatic correctness verdict.'}
     for name, value in [('report.json', report), ('reading-packets.json', packets), ('selected.json', selected)]:

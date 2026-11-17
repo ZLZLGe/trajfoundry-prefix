@@ -20,6 +20,9 @@ semantically correct. Manual findings and raw-source follow-ups are separate.
 The `--only-short-extensions` option completes the boundary with every removed
 record of at most six messages whose retained witness is longer. Its report
 distinguishes the source population from the equal-length pairs actually read.
+The mutually exclusive `--long-boundary-sample` option selects records with more
+than six messages by channel, length/session strata, and visible-difference
+boundaries. Selection is deterministic; it is not an error-rate sample.
 
 The diagnostic views probe text formatting, serialized arguments, leading headers,
 runtime notices, mask label differences, identity boundaries, and adjacent branch

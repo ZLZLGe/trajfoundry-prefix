@@ -303,6 +303,31 @@ evidence than matching a shared template and an empty classifier result, but
 does not reconstruct the hidden pre-masking values or establish an error rate
 for all 11,324 masking removals.
 
+The longer-history follow-up read 30 pairs from the 11,252 removals whose short
+side has more than six messages: 10 Boyue, 8 FreeRouter, and 12 TokenPlan. The
+selection covers length/session strata and deliberately chosen boundaries such
+as the earliest changed user message, greatest field-length imbalance, and
+largest number of changed fields. All 57 distinct source objects were read
+completely and checked against their byte lengths and SHA256 hashes.
+
+Twenty-eight pairs have exactly corresponding original tool-call ID sequences;
+two also involve ID rewriting. Fourteen pairs have visible differences only in
+the final assistant; sixteen differ at earlier message positions as well.
+Manual review covered visible field differences, task context, and selected
+surrounding messages. It did not add a confirmed task conflict. Examples include
+user-role timezone snapshots, repeated chat identity markers, a real travel
+question with an otherwise identical long history, and numerical output falsely
+labeled as a phone number. Long common history and matching operations support
+replay in these cases, but do not reveal the hidden values.
+
+Nine pairs also differ in reasoning fields: three only in ancillary metadata,
+four in masking of text, and two by omitted reasoning. No additional conflicting
+task interpretation was found in this review. Two pairs overlap the preceding
+82-pair evidence set, so the combined removal-side evidence now contains 110
+distinct pairs. This targeted check neither estimates an overall error rate nor
+invalidates the confirmed short-task placeholder issue and two strong semantic
+conflicts above. Private evidence is in `long-mask-boundaries/` outside Git.
+
 ## Execution and remaining work
 
 The user revised the objective to require local experiments. The completed
