@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter, OrderedDict
 from dataclasses import asdict
 from pathlib import Path
@@ -18,6 +19,9 @@ MODES = (
     "current", "format", "without_headers", "without_notifications",
     "without_headers_and_notifications", "format_without_headers_and_notifications",
     "cross_identity",
+)
+MASK_BYTES = re.compile(
+    rb"<(?:PERSON|LOCATION|ID_NUMBER|EMAIL|PHONE|PHONE_NUMBER|ADDRESS|IP_ADDRESS|ORGANIZATION)>"
 )
 
 
@@ -60,11 +64,13 @@ def make_index(ref, node, policy):
                 continue
         if len(values) < minimum:
             continue
-        vector = b"".join(digest(canonical(m)) for m in values)
+        tokens = [canonical(m) for m in values]
+        vector = b"".join(digest(t) for t in tokens)
+        masks = "".join("1" if MASK_BYTES.search(t) else "0" for t in tokens)
         roles = "".join({"system": "S", "developer": "D", "user": "U",
                          "assistant": "A", "tool": "T"}[m["role"]] for m in values)
         # Pickle preserves sharing between modes that make no actual change.
-        pair = pool.setdefault((vector, roles), (vector, roles))
+        pair = pool.setdefault((vector, roles, masks), (vector, roles, masks))
         variants[mode] = pair
     return {
         "ref": ref, "scope": p.scope, "scope_hash": digest(p.scope),
@@ -97,11 +103,11 @@ def count_index(rows):
 
 
 def sort_entries(row):
-    for mode, (vector, roles) in row["variants"].items():
+    for mode, (vector, roles, masks) in row["variants"].items():
         scope = row["cross_scope"] if mode == "cross_identity" else row["scope_hash"]
         ref = row["ref"]
         yield (mode, scope, vector, -ref["bytes"], ref["id"]), {
-            "ref": ref, "roles": roles, "scope": row["scope_hash"],
+            "ref": ref, "roles": roles, "masks": masks, "scope": row["scope_hash"],
         }
 
 
@@ -130,17 +136,22 @@ def scan_candidates(rows):
                 yield {"kind": "coverage_candidate", "relation": "prefix", "mode": mode,
                        "short": prior["ref"], "long": value["ref"],
                        "same_original_scope": value["scope"] == prior["scope"]}
-            elif (
-                mode != "cross_identity" and common >= 4 * 32
-                and limit >= 6 * 32 and common * 2 >= limit
-            ):
-                a, b = (prior, value) if len(old_vector) <= len(vector) else (value, prior)
+            elif mode != "cross_identity" and limit >= 6 * 32 and common < limit:
                 position = common // 32
+                masked = (prior.get("masks", "0" * len(prior["roles"]))[position] == "1"
+                          or value.get("masks", "0" * len(value["roles"]))[position] == "1")
+                ordinary_near = common >= 4 * 32 and common * 2 >= limit
+                masked_near = masked and common >= 2 * 32
+                if not (ordinary_near or masked_near):
+                    previous = key, value
+                    continue
+                a, b = (prior, value) if len(old_vector) <= len(vector) else (value, prior)
                 yield {"kind": "near_candidate", "mode": mode,
                        "short": a["ref"], "long": b["ref"],
                        "common_messages": position, "short_messages": limit // 32,
                        "long_messages": max(len(old_vector), len(vector)) // 32,
                        "first_difference_roles": a["roles"][position] + b["roles"][position],
+                       "first_difference_masked": masked,
                        "same_original_scope": a["scope"] == b["scope"]}
         previous = key, value
 
@@ -207,6 +218,34 @@ def verify_partition(rows, policy, storage):
         yield verify_candidate(row, reader.node(row["short"]), reader.node(row["long"]), policy)
 
 
+def verify_mask_partition(rows, policy, storage):
+    reader = NodeReader(storage)
+    for row in rows:
+        a, b = reader.node(row["short"]), reader.node(row["long"])
+        ap = project(a, row["short"]["dataset"], row["short"]["date"], policy)
+        bp = project(b, row["long"]["dataset"], row["long"]["date"], policy)
+        if ap.scope != bp.scope:
+            raise RuntimeError("Masked-neighbor identity scope changed")
+        av = variant([orjson.loads(t) for t in ap.tokens], row["mode"])
+        bv = variant([orjson.loads(t) for t in bp.tokens], row["mode"])
+        yield dict(row, full_sequences_checked=True, diagnostic_only=True,
+                   mask_prefix_directions=[prefix(av, bv, masked_candidate),
+                                           prefix(bv, av, masked_candidate)],
+                   current_rule_covers=raw_covers(a, b, row["short"], row["long"], policy))
+
+
+def count_masks(rows):
+    counts = Counter()
+    for row in rows:
+        for group in ("all", row["short"]["dataset"]):
+            counts[(group, row["mode"], "full_pairs_checked")] += 1
+            counts[(group, row["mode"], "mask_prefix_candidate_pairs")] += int(
+                any(row["mask_prefix_directions"])
+            )
+            counts[(group, row["mode"], "current_rule_covers")] += int(row["current_rule_covers"])
+    yield from counts.items()
+
+
 def sample_key(row):
     return digest(canonical([row["mode"], row["short"]["id"], row["long"]["id"]])).hex()
 
@@ -267,6 +306,7 @@ def counted(rows, verified=False):
             counts[(group, mode, row["kind"])] += 1
             if row["kind"] == "near_candidate":
                 counts[(group, mode, "near_roles:" + row["first_difference_roles"])] += 1
+                counts[(group, mode, "first_difference_masked")] += int(row["first_difference_masked"])
             if verified:
                 counts[(group, mode, "current_rule_covers")] += int(row["current_rule_covers"])
                 counts[(group, mode, "different_identity")] += int(not row["same_original_scope"])
@@ -336,9 +376,33 @@ def run(spark, input_plan, output, *, partitions, storage, expected_count, expec
         if metric == "coverage_candidate" and vcounts.get((group, mode, metric)) != n:
             raise RuntimeError("Not every transformed-prefix candidate was verified")
     event("all_coverage_candidates_verified", all_counts=nested(vcounts).get("all", {}))
+    masked = candidates.filter(lambda r: r["kind"] == "near_candidate" and r["first_difference_masked"])
+    mask_checks = masked.mapPartitions(lambda rows: verify_mask_partition(rows, policy, storage)).persist(
+        StorageLevel.DISK_ONLY
+    )
+    mask_checks.map(lambda r: json.dumps(r, ensure_ascii=False, separators=(",", ":"))).saveAsTextFile(
+        str(output / "mask-candidate-checks")
+    )
+    mask_counts = dict(mask_checks.mapPartitions(count_masks).reduceByKey(lambda a, b: a + b).collect())
+    for (group, mode, metric), n in counts.items():
+        if metric == "first_difference_masked" and mask_counts.get((group, mode, "full_pairs_checked"), 0) != n:
+            raise RuntimeError("Not every masked-neighbor candidate was checked")
+    positive_masks = mask_checks.filter(lambda r: any(r["mask_prefix_directions"]))
+    mask_unique_pairs = positive_masks.map(
+        lambda r: tuple(sorted((r["short"]["id"], r["long"]["id"])))
+    ).distinct(partitions).count()
+    (output / "mask-counts.json").write_text(json.dumps({
+        "counts": nested(mask_counts), "unique_candidate_pairs_across_modes": mask_unique_pairs,
+        "diagnostic_only": True,
+    }, indent=2) + "\n")
+    event("all_masked_neighbor_candidates_checked", unique_candidate_pairs=mask_unique_pairs)
     samples = candidates.map(lambda row: (sample_group(row), [row])).reduceByKey(
         bounded_merge, partitions
     ).flatMap(lambda item: item[1]).collect()
+    mask_samples = positive_masks.map(
+        lambda row: ((row["short"]["dataset"], row["mode"]), [row])
+    ).reduceByKey(bounded_merge, partitions).flatMap(lambda item: item[1]).collect()
+    samples = list({sample_key(row): row for row in samples + mask_samples}.values())
     (output / "sample-inputs.json").write_text(json.dumps(samples, ensure_ascii=False, indent=2) + "\n")
     sc.parallelize(samples, min(partitions, len(samples)) or 1).mapPartitions(
         lambda rows: explain_partition(rows, policy, storage)
@@ -353,17 +417,21 @@ def run(spark, input_plan, output, *, partitions, storage, expected_count, expec
         "input_count": expected_count, "policy": asdict(policy), "modes": list(MODES),
         "inventory": inventory, "candidate_counts": nested(counts),
         "verified_candidate_counts": nested(vcounts), "evidence_pairs": len(samples),
+        "masked_neighbor_counts": nested(mask_counts),
+        "unique_mask_candidate_pairs_across_modes": mask_unique_pairs,
         "diagnostic_only": True, "s3_writes": False,
         "limitations": [
             "Current and format modes require >=2 projected messages; header/notification probes >=4; cross-identity >=6 plus tool result and 1024 content characters.",
             "Every eligible record enters each mode's prefix comparison. Every emitted coverage candidate is checked against full raw JSON, not only hashes.",
             "Mode counts overlap and are candidate relationships, not permission or an estimate to delete that many trajectories.",
-            "Near-candidate counts cover sorted adjacent distinct vectors with >=4 shared messages and >=50% of a shorter sequence of >=6 messages; they do not enumerate every possible pair.",
-            "Detailed differences and masking probes use five deterministic examples per dataset/mode/relation-or-role bucket. These examples cannot estimate full-population masking/notification rates.",
+            "Near-candidate counts cover sorted adjacent distinct vectors with >=4 shared messages and >=50% of a shorter sequence of >=6 messages, or >=2 shared messages when the first difference contains a known masking placeholder. They do not enumerate every possible pair or first-two-message masking differences.",
+            "Every first-difference-masked neighbor is checked over the full transformed sequences. This is complete within the candidate set, not an exhaustive count of all possible masking matches.",
+            "Detailed differences use five deterministic examples per dataset/mode/relation-or-role bucket, plus five positive masking examples per dataset/mode. Placeholders do not prove original equality or permission to delete.",
         ],
     }
     (output / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     (output / "SUCCEEDED").write_text("full index and all coverage-candidate checks complete\n")
     verified.unpersist()
+    mask_checks.unpersist()
     event("deep_review_complete", evidence_pairs=len(samples))
     return report
