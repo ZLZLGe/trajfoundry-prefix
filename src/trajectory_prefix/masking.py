@@ -199,11 +199,19 @@ def priority(row):
 def string_bound(value):
     found = list(markers(value))
     literal_length = len(value) - sum(m.end() - m.start() for m in found)
+    # Placeholders cannot consume CR or LF. Keep their exact order and hashes
+    # of the aligned lines so ordinary prompt text can reject coarse pairs
+    # without fetching either complete source object again. Other Unicode line
+    # separators remain ordinary characters, as in the actual matcher.
+    lines = re.split(r"([\r\n])", value)
+    line_info = (digest("".join(lines[1::2]).encode()),
+                 b"".join(digest(line.encode()) for line in lines[::2]),
+                 bytes(bool(markers(line)) for line in lines[::2]))
     return (len(value), digest(value.encode()), value[:64], value[-64:],
             (value[:found[0].start()][:64] if found else value[:64]),
             (value[found[-1].end():][-64:] if found else value[-64:]),
             literal_length + len(found), literal_length + len(found) * MAX_SPAN,
-            bool(found))
+            bool(found), line_info)
 
 
 def bounds_possible(a, b):
@@ -211,8 +219,17 @@ def bounds_possible(a, b):
         return True
 
     def direction(pattern, value):
-        return (pattern[8] and pattern[6] <= value[0] <= pattern[7]
-                and value[2].startswith(pattern[4]) and value[3].endswith(pattern[5]))
+        if not (pattern[8] and pattern[6] <= value[0] <= pattern[7]
+                and value[2].startswith(pattern[4]) and value[3].endswith(pattern[5])):
+            return False
+        # Older immutable indexes remain a valid, less selective filter.
+        if len(pattern) < 10 or len(value) < 10:
+            return True
+        p, v = pattern[9], value[9]
+        if p[0] != v[0]:
+            return False
+        return all(masked or p[1][i * 32:(i + 1) * 32] == v[1][i * 32:(i + 1) * 32]
+                   for i, masked in enumerate(p[2]))
 
     return direction(a, b) or direction(b, a)
 

@@ -5,7 +5,7 @@ from test_masking import indexed
 from test_tool_ids import sample
 
 from trajectory_prefix.mask_job import POLICY
-from trajectory_prefix.mask_verification import raw_relaxed_covers
+from trajectory_prefix.mask_verification import raw_relaxed_covers, string_oracle
 from trajectory_prefix.masking import (
     bounds_possible,
     group_candidates,
@@ -62,3 +62,51 @@ def test_string_bounds_never_reject_a_true_bounded_match():
     for n in [1, 63, 64, 65, 255, 256]:
         a, b = "leading" * 30 + "[USER]" + "tail" * 30, "leading" * 30 + "x" * n + "tail" * 30
         assert bounds_possible(string_bound(a), string_bound(b))
+
+
+def test_multiline_bounds_keep_every_independently_verified_match():
+    rng = random.Random(171030)
+    for _ in range(1500):
+        fragments = [rng.choice(["plain", "\r", "\n", "\r\n", "\u2028", "<PERSON>",
+                                 "[SENSITIVE]", "<PATH>", "中文"])
+                     for _ in range(rng.randint(1, 12))]
+        pattern = "".join(fragments)
+        value = "".join(rng.choice(["Alice", "x" * 256, "<PHONE>", "中\u2028文"])
+                        if s in {"<PERSON>", "[SENSITIVE]"} else s for s in fragments)
+        assert string_oracle(pattern, value)
+        assert bounds_possible(string_bound(pattern), string_bound(value))
+        assert bounds_possible(string_bound(value), string_bound(pattern))
+
+
+def test_prompt_markers_do_not_hide_different_literal_lines():
+    prefix, suffix = "shared prefix " * 10, " shared suffix" * 10
+    a = prefix + "\nquestion one\n<REASON>\n" + suffix
+    for middle in ("\nquestion two\n<REASON>\n", "\nquestion\none\n<REASON>\n",
+                   "\rquestion one\n<REASON>\n"):
+        b = prefix + middle + suffix
+        assert not string_oracle(a, b)
+        assert not bounds_possible(string_bound(a), string_bound(b))
+    # Different directions on different lines must not establish a match.
+    assert not bounds_possible(string_bound("<PERSON>\nAlice"),
+                               string_bound("Bobby\n<PERSON>"))
+
+
+def test_multiline_candidates_preserve_raw_matches_and_reject_literal_changes(tmp_path):
+    texts = ["shared\nhello Alice\n<REASON>\nend",
+             "shared\nhello <PERSON>\n<REASON>\nend",
+             "shared\nhello Bobby\n<REASON>\nend",
+             "shared\nother subject\n<REASON>\nend",
+             "shared\r\nhello Alice\n<REASON>\nend"]
+    nodes = [sample(str(i), True) for i in range(len(texts))]
+    for node, text in zip(nodes, texts):
+        node["messages"][0]["content"] = text
+    rows = indexed(tmp_path, nodes)
+    candidates = {frozenset((p["short"]["id"], p["long"]["id"]))
+                  for p in group_candidates(("same-scope", rows))}
+    expected = set()
+    for i, j in itertools.combinations(range(len(rows)), 2):
+        ar, br = rows[i]["ref"], rows[j]["ref"]
+        if raw_relaxed_covers(nodes[i], nodes[j], ar, br, POLICY):
+            expected.add(frozenset((ar["id"], br["id"])))
+    assert candidates == expected
+    assert len(expected) == 2
