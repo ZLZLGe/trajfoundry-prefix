@@ -1,9 +1,13 @@
+import random
+import re
+import subprocess
+import sys
 from copy import deepcopy
 
 import pytest
 from test_tool_ids import sample
 
-from trajectory_prefix.pair_review import argument_view, masked_string_candidate, review_pair
+from trajectory_prefix.pair_review import MASK, argument_view, masked_string_candidate, review_pair
 from trajectory_prefix.projection import Policy
 
 POLICY = Policy(extra_information="messages_only")
@@ -95,3 +99,57 @@ def test_combined_diagnostic_keeps_real_content_changes_visible():
     assert (a, b) == originals
     b["messages"][-1]["content"] = "a genuinely different answer"
     assert not review_pair(a, b, REF, REF, POLICY)["diagnostic_prefix_candidates"]
+
+
+@pytest.mark.parametrize("pattern,value,expected", [
+    ("a<PERSON>z", "az", False),
+    ("a<PERSON>z", "a" + "x" * 256 + "z", True),
+    ("a<PERSON>z", "a" + "x" * 257 + "z", False),
+    ("<PERSON><PHONE>", "x", False),
+    ("<PERSON><PHONE>", "xy", True),
+    ("<PERSON><PHONE>", "x" * 512, True),
+    ("<PERSON><PHONE>", "x" * 513, False),
+    ("a<PERSON>z", "ax\nyz", False),
+    ("a<PERSON>z", "ax\ryz", False),
+    ("<PERSON>\r\n<PHONE>", "甲\r\n乙", True),
+    ("<PERSON>\n<PHONE>", "甲\n乙\n丙", False),
+    ("<PERSON>a<PHONE>", "aax", True),
+    ("<PERSON>a<PHONE>", "xa", False),
+    ("a<UNKNOWN>z", "axyz", False),
+])
+def test_mask_matching_preserves_character_bounds_and_literal_newlines(pattern, value, expected):
+    assert masked_string_candidate(pattern, value) is expected
+    assert masked_string_candidate(value, pattern) is expected
+
+
+def test_mask_matching_agrees_with_previous_regex_on_bounded_synthetic_inputs():
+    def oracle(a, b):
+        if a == b:
+            return True
+        for pattern, value in ((a, b), (b, a)):
+            parts = MASK.split(pattern)
+            if len(parts) > 1:
+                regex = r"[^\r\n]{1,256}?".join(map(re.escape, parts))
+                if re.fullmatch(regex, value):
+                    return True
+        return False
+
+    randomizer = random.Random(20261117)
+    pieces = ["a", "b", " ", "\r", "\n", "甲", "<PERSON>", "<PHONE>"]
+    values = ["a", "bb", " ", "\n", "甲乙", "<PERSON>"]
+    for _ in range(3000):
+        a = "".join(randomizer.choices(pieces, k=randomizer.randint(1, 6)))
+        b = MASK.sub(lambda _: randomizer.choice(values), a)
+        if randomizer.randrange(2):
+            b += randomizer.choice(values)
+        assert masked_string_candidate(a, b) == oracle(a, b), (a, b)
+
+
+def test_repeated_mask_late_mismatch_finishes_without_exponential_backtracking():
+    # A subprocess bounds regression runtime even if the old regex returns.
+    code = (
+        "from trajectory_prefix.pair_review import masked_string_candidate as match; "
+        "assert not match('<PERSON> ' * 14 + 'MISSING <PHONE> END', 'x ' * 60 + 'x END'); "
+        "assert match('<PERSON>' * 64, 'x' * 4096)"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True, capture_output=True, timeout=5)
