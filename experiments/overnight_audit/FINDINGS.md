@@ -144,6 +144,47 @@ covered record, including cases hidden by same-harness sorted neighbors. Its
 completeness check matches an exhaustive search over randomized synthetic
 cases. Actual execution was `local[8]`, exit 0, with no S3 writes.
 
+## Thought-only responses and replay layout
+
+All 425 pairs primarily attributed to empty-visible-assistant positions were
+read again locally: TokenPlan 397 and Boyue 28. These counts are subsets of the
+earlier attribution, not new additions. The earlier empty probe's 434 incremental
+pairs also included 9 Boyue pairs subsequently explained by identity protection.
+
+| First blocking difference | TokenPlan | Boyue |
+|---|---:|---:|
+| Same reasoning split from an action into a separate assistant | 87 | 0 |
+| Same complete reasoning text embedded in visible assistant content | 30 | 0 |
+| Terminal thought-only response differs | 239 | 21 |
+| Terminal fully empty response differs | 2 | 7 |
+| Other internal empty-assistant layout differences | 39 | 0 |
+
+For all 87 split cases, the reasoning text is exactly equal, the following
+visible action matches, and removing only the additional empty-visible position
+restores a complete visible prefix. The other categories include incomplete
+responses, repeated attempts, and an empty image-task response versus one with
+an image. They cannot all be called duplicate successful trajectories.
+
+Eight selected pairs were manually read. Two were traced to both collection
+envelopes, preserving the distinction between captured normalized responses and
+original network bytes:
+
+- A Responses API request grows from 41 to 45 input items, with all earlier
+  items unchanged. A 547-character `reasoning_text` output is replayed in a
+  later assistant `output_text`, surrounded by `<thinking>` tags, followed by
+  an idle-turn reminder. The standardized objects inherit these representations.
+- A Chat Completions request grows from 406 to 410 messages, with all earlier
+  messages unchanged. Its previous response is one assistant with 3,342
+  reasoning characters and two tool calls. The next request has a thought-only
+  assistant followed by a tool-call assistant. Reasoning text, call IDs, names,
+  and arguments are exactly equal. The split already exists before TrajFoundry.
+
+The production rule ignores reasoning fields but deliberately retains the
+positions of thought-only messages. It therefore does not automatically handle
+this change in message layout or reasoning replayed as visible content. These
+findings explain retention without adding a rule. Full JSON, receipts, and manual
+judgments remain outside Git.
+
 ## Manual branch review
 
 Thirty-six pairs were read, twelve per channel, in addition to the earlier three
