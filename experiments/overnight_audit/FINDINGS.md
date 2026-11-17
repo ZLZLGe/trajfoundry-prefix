@@ -80,6 +80,17 @@ after that change. This is a concrete source of presentation duplicates, not
 evidence that every leading space can safely be stripped: indentation may carry
 meaning, and the production rule remains unchanged.
 
+One of these five examples was traced to the collection envelopes. The earlier
+request has 10 messages and the later request has 12; their first 10 messages
+are exactly equal. The earlier captured response begins with two newlines; the
+later request replays the assistant text without them and with exactly equal
+tool calls. Both standardized files inherit their corresponding captured text
+exactly. The requests arrived 8.745 seconds apart, with the later request 1.037
+seconds after the earlier response completed. The difference therefore predates
+TrajFoundry standardization. The response capture is explicitly
+`OPENAI_CHAT_COMPLETIONS_NORMALIZED`, not raw network bytes; the evidence does
+not identify whether a client, gateway, or capture normalization changed it.
+
 The leading-header sample demonstrates why this bucket is not automatically
 removable. Examples include elapsed runtime timestamps, a saved command
 approval, changed agent-to-agent roles, changed model identity/response
@@ -118,6 +129,20 @@ known session or end-user identity. This is strong evidence of a related
 workflow, but it does not establish the real user or the reason the collector's
 source user ID changed. The standardizer did not introduce the ID difference.
 Raw requests, source hashes, and comparisons remain outside Git.
+
+## Harness-boundary check
+
+A further local scan checked whether a change in harness labels could split
+otherwise identical model/user/session scopes. All 1,573,632 indexed records
+were counted. After removing only harness from the identity key, no group
+contained more than one harness label, so this dataset has zero candidates
+arising solely from this boundary. This does not test changing model or other
+identity fields simultaneously.
+
+The experimental scan supports one verified other-harness witness for every
+covered record, including cases hidden by same-harness sorted neighbors. Its
+completeness check matches an exhaustive search over randomized synthetic
+cases. Actual execution was `local[8]`, exit 0, with no S3 writes.
 
 ## Manual branch review
 
