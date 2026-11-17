@@ -101,6 +101,8 @@ def view(messages, mode):
     if mode in {'stable_messages', 'cross_identity'}:
         return messages
     result = copy.deepcopy(messages)
+    if mode == 'without_empty_visible_assistant':
+        return [m for m in result if m != {'role': 'assistant', 'content': ''}]
     if mode in {'without_headers', 'body_format'}:
         while result and result[0]['role'] in {'system', 'developer'}:
             result.pop(0)
@@ -267,6 +269,9 @@ def verify(row, short_node, long_node):
               'sessionless': ga[-2] == 'sessionless', 'same_identity': ga == gb,
               'identity_differences': [name for name, x, y in zip(names, ga, gb) if x != y],
               'binding_issues': [ai, bi], 'message_counts': [len(a), len(b)],
+              'reasoning_only_counts': [sum(m['role'] == 'assistant' and not m.get('content')
+                    and not m.get('tool_calls') and any(m.get(k) for k in REASONING)
+                    for m in n['messages']) for n in (short_node, long_node)],
               'common_stable_messages': common,
               'first_difference': difference(a[common], b[common]) if common < min(len(a), len(b)) else None,
               'literal_coverage': is_prefix(a, b),

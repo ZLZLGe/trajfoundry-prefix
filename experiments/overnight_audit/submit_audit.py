@@ -23,6 +23,8 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--executors', type=int, default=4)
     parser.add_argument('--partitions', type=int, default=512)
+    parser.add_argument('--entrypoint', choices=['run_audit.py', 'run_empty_visible_probe.py'], default='run_audit.py')
+    parser.add_argument('--input-index', type=Path)
     args = parser.parse_args()
     config = json.loads(args.config.read_text())
     assert config['queue'] == 'root.datacenter.pjcc.agent_trajectory'
@@ -37,11 +39,14 @@ def main():
                                   partitions=args.partitions, executors=args.executors,
                                   executor_cores=8, input_cache=False)
     app = command.index('local://' + str(control / 'app/scripts/run.py'))
-    command[app:] = ['local://' + str(control / 'app/experiments/overnight_audit/run_audit.py'),
+    command[app:] = ['local://' + str(control / 'app/experiments/overnight_audit' / args.entrypoint),
                     '--input-plan', str(args.input_plan), '--expected-count', str(args.expected_count),
                     '--output', str(output), '--partitions', str(args.partitions),
                     '--s3-endpoint', config['s3_endpoint'], '--s3-region', config['s3_region'],
                     '--s3-credentials-file', config['s3_credentials_file']]
+    if args.input_index:
+        command += ['--input-index', str(args.input_index)]
+    assert (args.entrypoint == 'run_empty_visible_probe.py') == bool(args.input_index)
     for role in ['driver', 'executor']:
         template = submit.pod_template(config, control, output, driver=role == 'driver', pod=pod)
         (control / (role + '-pod.json')).write_text(json.dumps(template, indent=2) + '\n')

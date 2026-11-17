@@ -74,3 +74,15 @@ def test_notice_probe_keeps_unrelated_user_instructions():
     a = [{'role': 'user', 'content': 'solve A<system-reminder>runtime text</system-reminder>'}]
     assert audit.view(a, 'without_notices') == [{'role': 'user', 'content': 'solve A'}]
     assert audit.view([{'role': 'user', 'content': 'solve B'}], 'without_notices') != audit.view(a, 'without_notices')
+
+
+def test_empty_visible_probe_reveals_omitted_thought_turn_without_changing_baseline():
+    a, b = node(), node()
+    a['messages'].insert(3, {'role': 'assistant', 'content': '', 'reasoning_content': 'private thought'})
+    am, _ = audit.stable_messages(a)
+    bm, _ = audit.stable_messages(b)
+    assert len(am) == 5 and len(bm) == 4
+    assert not audit.is_prefix(am, bm)
+    assert audit.is_prefix(audit.view(am, 'without_empty_visible_assistant'),
+                           audit.view(bm, 'without_empty_visible_assistant'))
+    assert len(audit.view(am, 'stable_messages')) == 5
