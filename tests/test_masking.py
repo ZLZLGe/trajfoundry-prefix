@@ -7,6 +7,7 @@ from copy import deepcopy
 import pytest
 from test_tool_ids import sample
 
+from trajectory_prefix.mask_evidence import explain_partition
 from trajectory_prefix.mask_job import POLICY, audit_partition, check_partition, index_partition
 from trajectory_prefix.mask_verification import raw_relaxed_covers, string_oracle
 from trajectory_prefix.masking import (
@@ -149,3 +150,16 @@ def test_many_placeholders_do_not_use_regex_backtracking():
     assert string_matches(pattern, "a" + "x" * 501 + "b")
     assert not string_matches(pattern, "a" + "x" * 499 + "b")
     assert not markers("<PACK_PATH> <SCHEMA_PATH> <KEY> <PATH>")
+
+
+def test_explanation_distinguishes_required_marker_from_unchanged_markup(tmp_path):
+    a, b = sample("a", True), sample("b", True)
+    a["messages"][0]["content"] = "[KNOWN] inspect /Users/[USER]/a"
+    b["messages"][0]["content"] = "[KNOWN] inspect /Users/Alice/a"
+    rows = indexed(tmp_path, [a, b])
+    pairs = list(group_candidates((rows[0]["group"], rows)))
+    decisions = list(choose_group((rows[0]["group"], (rows, pairs))))
+    result = list(explain_partition(decisions, StorageConfig()))
+    assert result[0]["necessary_labels"] == ["[USER]"]
+    assert result[0]["source_mask_labels_suffice"]
+    assert string_matches("[KNOWN]", "anything")  # Counterfactual state was restored.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from contextvars import ContextVar
 
 from .projection import canonical
 
@@ -13,11 +14,15 @@ LABEL = r"(?:[A-Z][A-Z0-9_]{1,63}|(?i:MASKED|REDACTED|SENSITIVE)(?:_[A-Za-z0-9_]
 MARKER = re.compile(r"<" + LABEL + r">|\[" + LABEL + r"\]")
 MAX_SPAN = 256
 VERSION = "placeholder-relaxed-v1"
+# Used only by the explanatory counterfactual probe; the actual matcher defaults
+# to all approved marker forms. Context-local state cannot leak across workers.
+DISABLED_LABELS = ContextVar("disabled_mask_labels", default=frozenset())
 
 
 def markers(value, *, include_templates=False):
     return [m for m in MARKER.finditer(value)
-            if include_templates or m.group()[1:-1].upper() not in TEMPLATES]
+            if include_templates or (m.group()[1:-1].upper() not in TEMPLATES
+                                     and m.group() not in DISABLED_LABELS.get())]
 
 
 def parts(value):
