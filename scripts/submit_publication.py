@@ -63,8 +63,10 @@ def main():
     (control / "empty.properties").write_text("# No inherited Spark defaults.\n")
     plan = {"driver_pod": pod, "queue": config["queue"], "command": command,
             "output": str(output), "execute": args.execute,
-            "normalized_uri": spec["normalized_uri"], "selection_base_uri": spec["selection_base_uri"],
-            "selection_version": spec["selection_version"], "validation_source": str(validator),
+            "normalized_uri": spec["normalized_uri"],
+            "publish_selection": spec.get("publish_selection", True),
+            "selection_base_uri": spec.get("selection_base_uri"),
+            "selection_version": spec.get("selection_version"), "validation_source": str(validator),
             "repository_commit": subprocess.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=submit.REPO, text=True).strip()}
     (control / "plan.json").write_text(json.dumps(plan, indent=2) + "\n")

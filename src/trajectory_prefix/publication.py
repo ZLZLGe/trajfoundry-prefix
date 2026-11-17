@@ -50,6 +50,13 @@ def selected(metrics, spec):
         names, ("min_tokens", "min_tool_calls", "min_assistant_steps")))
 
 
+def selection_enabled(spec):
+    value = spec.get("publish_selection", True)
+    if type(value) is not bool:
+        raise ValueError("publish_selection must be a boolean")
+    return value
+
+
 def merge_origins(origins):
     """Keep each source once; combine its already-recorded quality evidence."""
     merged = {}
@@ -102,13 +109,17 @@ class PublicationStore:
         self.spec, self.owner = spec, publication_id
         self.bucket, self.source = location(spec["source_uri"])
         bucket, self.normalized = location(spec["normalized_uri"])
-        selection_bucket, base = location(spec["selection_base_uri"])
-        if bucket != self.bucket or selection_bucket != self.bucket:
+        if bucket != self.bucket:
             raise ValueError("Publication must stay in one bucket")
-        self.selections = {
-            model: base + model_component(model) + "/" + relative_path(spec["selection_version"]) + "/"
-            for model in spec["models"]
-        }
+        self.selections = {}
+        if selection_enabled(spec):
+            selection_bucket, base = location(spec["selection_base_uri"])
+            if selection_bucket != self.bucket:
+                raise ValueError("Publication must stay in one bucket")
+            self.selections = {
+                model: base + model_component(model) + "/" + relative_path(spec["selection_version"]) + "/"
+                for model in spec["models"]
+            }
         if len(set(self.selections.values())) != len(self.selections):
             raise ValueError("Model directory collision")
         prefixes = [self.source, self.normalized, *self.selections.values()]
@@ -255,9 +266,19 @@ def inspect_partition(lines, spec, owner):
                 validate_derived_fields(node)
             strict = is_strict_sample(node)
             metrics = {k: value[k] for k in ("total_tokens", "total_tool_calls", "total_rounds")}
-            qualifies = selected(metrics, spec)
+            qualifies = selected(metrics, spec) if selection_enabled(spec) else False
             if node.model not in spec["models"]:
                 raise ValueError("Unexpected model")
+            if (decision["status"] == "removed"
+                    and spec.get("comparison_mode", "prefix") == "placeholder-relaxed-v1"):
+                from .mask_verification import raw_relaxed_covers
+                from .projection import Policy
+
+                target = decision["retained"]
+                target_raw, _ = store.read(store.source + target["path"], target)
+                if not raw_relaxed_covers(value, json.loads(target_raw), ref, target,
+                                          Policy(**spec["policy"])):
+                    raise ValueError("Relaxed removal failed independent publication audit")
         except Exception as error:
             raise ValueError("Trajectory validation failed: " + ref["path"] + " ("
                              + type(error).__name__ + ")") from None

@@ -11,6 +11,7 @@ from trajectory_prefix.publication import (
     model_component,
     normalized_manifest,
     selected,
+    selection_enabled,
     selection_manifest,
     sha256,
 )
@@ -83,6 +84,29 @@ def test_writer_rejects_old_versions_and_unguarded_copies(spec):
         PublicationStore({**spec, "models": ["a/b", "a_b"]}, "owner", client=object())
     with pytest.raises(ValueError):
         model_component("..")
+
+
+def test_normalized_only_has_no_selection_targets_or_required_thresholds(spec):
+    minimal = {k: spec[k] for k in ("source_uri", "normalized_uri", "models")}
+    minimal["publish_selection"] = False
+    store = PublicationStore(minimal, "owner", client=object())
+    assert not selection_enabled(minimal)
+    assert store.targets == [store.normalized]
+    assert store.selections == {}
+    assert store.manifest_keys == {store.normalized + "manifest.json"}
+    for operation, key in [("PutObject", "dataset/selected/model-a/v003/manifest.json"),
+                           ("CopyObject", "dataset/selected/model-a/v003/dt=x/a.jsonl")]:
+        with pytest.raises(ValueError, match="outside publication scope"):
+            store.guard(SimpleNamespace(name=operation), {
+                "Bucket": "bucket", "Key": key,
+                "CopySource": {"Bucket": "bucket", "Key": store.source + "a.jsonl"},
+                "CopySourceIfMatch": "etag"})
+    store.guard(SimpleNamespace(name="PutObject"), {
+        "Bucket": "bucket", "Key": store.normalized + "manifest.json"})
+    assert selection_enabled(spec)
+    for value in (0, 1, "false", None):
+        with pytest.raises(ValueError, match="boolean"):
+            PublicationStore({**minimal, "publish_selection": value}, "owner", client=object())
 
 
 class Body(BytesIO):

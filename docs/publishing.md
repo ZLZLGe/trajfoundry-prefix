@@ -16,7 +16,17 @@
 
 发布配置包含 `source_uri`（标准化日期分区）、`normalized_uri`（新日期分区）、`selection_base_uri`、`selection_version`、`models`、`dataset`、`date`、三个 `min_*` 阈值，以及已核验的 `source_run`、`audit_report`、`recheck_report`、`policy`、`source_manifest_sha256`、`input_plan_sha256`、`decision_files_sha256`。S3 设置为 `s3_endpoint`、`s3_region`、`s3_credentials_file`，必须与 Cluster 配置相同。决策文件摘要是排序后的 `{part文件名: SHA256}` 经本模块 `encoded` 序列化后的 SHA256。
 
+`publish_selection` 默认为 `true`，保持原有标准化与模型筛选同时发布的行为。设为 `false` 时，只处理标准化目标：无需 `selection_base_uri`、`selection_version` 和三个 `min_*` 参数，不计算筛选条件、不创建筛选阶段，也不允许对筛选前缀进行读写。`models` 仍用于检查输入模型范围。轨迹与标准化 manifest 的字段契约不变。
+
 `source_inventory_receipt` 指向全前缀探查时冻结的清单回执，`source_inventory_sha256` 固定其内容。回执须包含源 URI、manifest 和 input plan 摘要、轨迹数与字节数、`complete_requested_prefix=true`、`non_trajectory_files`（path、bytes）。源目录中未列入 manifest 的旧诊断文件也必须与该清单完全一致；未知文件或大小变化均失败。诊断文件不复制到新版本。
+
+## 发布脱敏宽松评估结果
+
+`comparison_mode` 默认为 `prefix`，沿用原审计与复跑回执。发布已完成的脱敏评估时，显式指定 `placeholder-relaxed-v1`，并提供该评估的 `input_plan`、`source_report_sha256`、`audit_files_sha256`、`retained_files_sha256`、`recheck_files_sha256`；后面三个摘要分别固定 `source_run` 下的 `audit/`、`retained-input/`、`recheck-checks/`，算法与决策目录摘要相同。此模式直接验证脱敏评估产物，不要求构造普通前缀模式的 `audit_report` 或 `recheck_report`。
+
+发布前检查完整决策与源 manifest、冻结输入清单逐项对应；验证报告中的规则版本、256 字符边界、字面模板排除集合和消息策略；核对每条独立审计的最终保留引用，要求全部删除都有成功证据；保留输入必须与决定完全一致，复跑候选必须全部不匹配。所有证据目录必须成功完成且文件摘要不变。
+
+Cluster 源文件检查阶段还会重新读取每条脱敏删除关系的两侧原文件，校验 SHA256 并调用独立原始 JSON 比较器。该阶段全部通过后才开始 S3 复制。发布不会重新选择代表或修改脱敏规则；运行回执记录实际 `comparison_mode` 和 `publish_selection`。
 
 ## 数据与来源
 

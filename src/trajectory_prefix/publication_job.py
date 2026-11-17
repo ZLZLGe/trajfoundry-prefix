@@ -16,6 +16,7 @@ from .publication import (
     merge_lineage_group,
     normalized_manifest,
     reason_counts,
+    selection_enabled,
     selection_manifest,
     sha256,
     write_json,
@@ -30,16 +31,26 @@ def emit(event, **values):
 def read_decisions(spec, source):
     run = Path(spec["source_run"])
     report = json.loads((run / "report.json").read_text())
-    audit = json.loads(Path(spec["audit_report"]).read_text())
-    recheck = json.loads(Path(spec["recheck_report"]).read_text())
     if not ((run / "SUCCEEDED").is_file() and (run / "decisions/_SUCCESS").is_file()
-            and audit.get("passed") and audit["policy"] == report["policy"] == spec["policy"]
-            and recheck["policy"] == spec["policy"] and recheck["removed_count"] == 0
-            and recheck["input_count"] == report["kept_count"]
-            and audit["input_plan_sha256"] == report["input_plan_sha256"]
-            == spec["input_plan_sha256"]
-            and file_sha256(Path(report["input_plan"])) == spec["input_plan_sha256"]):
-        raise ValueError("Completed independent audit and recheck are required")
+            and report["policy"] == spec["policy"]):
+        raise ValueError("Completed matching decisions are required")
+    mode = spec.get("comparison_mode", "prefix")
+    if mode == "prefix":
+        audit = json.loads(Path(spec["audit_report"]).read_text())
+        recheck = json.loads(Path(spec["recheck_report"]).read_text())
+        if not (audit.get("passed") and audit["policy"] == report["policy"]
+                and recheck["policy"] == spec["policy"] and recheck["removed_count"] == 0
+                and recheck["input_count"] == report["kept_count"]
+                and audit["input_plan_sha256"] == report["input_plan_sha256"]
+                == spec["input_plan_sha256"]
+                and file_sha256(Path(report["input_plan"])) == spec["input_plan_sha256"]):
+            raise ValueError("Completed independent audit and recheck are required")
+    elif mode == "placeholder-relaxed-v1":
+        from .publication_evidence import validate_mask_report
+
+        validate_mask_report(spec, report)
+    else:
+        raise ValueError("Unsupported publication comparison mode")
     files = {entry["path"]: entry for entry in source["files"] if entry["path"] != "lineage.jsonl"}
     decisions = {}
     inventory = {}
@@ -67,6 +78,12 @@ def read_decisions(spec, source):
             if (retained["path"] not in kept
                     or retained != decisions[retained["path"]]["record"]):
                 raise ValueError("Removal does not name a final retained input")
+    if len(decisions) - len(kept) != report["removed_count"]:
+        raise ValueError("Removal count differs from audited count")
+    if mode == "placeholder-relaxed-v1":
+        from .publication_evidence import validate_mask_decisions
+
+        validate_mask_decisions(spec, report, decisions)
     return decisions, report
 
 
@@ -172,7 +189,8 @@ def run(spec_path, output, partitions=512):
         require_inventory(store, store.source, expected_inventory, allow_manifest=False)
         decisions, prior_report = read_decisions(spec, source)
         emit("source_verified", input_count=len(decisions), kept_count=prior_report["kept_count"],
-             normalized_uri=spec["normalized_uri"], selection_version=spec["selection_version"])
+             normalized_uri=spec["normalized_uri"], publish_selection=selection_enabled(spec),
+             selection_version=spec.get("selection_version"))
 
         from .publication import copy_partition, inspect_partition, verify_copies_partition
         inputs = sc.parallelize([encoded(decisions[k]).decode() for k in sorted(decisions)], partitions)
@@ -288,34 +306,35 @@ def run(spec_path, output, partitions=512):
         store.put(store.normalized + "manifest.json", encoded(candidate))
         emit("normalized_published", count=len(copy_rows), total_bytes=candidate["total_bytes"])
 
-        eligible = [row for row in copy_rows if row["selected"]]
-        selected_input = sc.parallelize([encoded(row).decode() for row in eligible], partitions)
-        resumed_selection = (output / "stages/selection-copy.json").exists()
-        selected_copies = stage(sc, output, "selection-copy", owner,
-                               lambda: selected_input.mapPartitions(
-                                   lambda it: copy_partition(it, spec, owner, selection=True)))
-        if resumed_selection:
-            if selected_copies.mapPartitions(
-                    lambda it: verify_copies_partition(it, spec, owner, selection=True)).sum() != len(eligible):
-                raise ValueError("Resumed selected outputs failed verification")
-        selected_rows = selected_copies.collect()
-        if (len(selected_rows) != len(eligible)
-                or {r["path"] for r in selected_rows} != {r["path"] for r in eligible}):
-            raise ValueError("Selection copy receipts are incomplete")
-        groups = defaultdict(list)
-        for row in selected_rows:
-            groups[row["model"]].append(row)
-        model_reports = []
-        for model in spec["models"]:
-            group = groups.get(model, [])
-            prefix = store.selections[model]
-            require_inventory(store, prefix, {"dt=" + r["date"] + "/" + r["path"]: r["bytes"] for r in group})
-            if not group:
-                continue
-            short_manifest = selection_manifest(model, group, spec)
-            write_json(output / "model-manifests" / (model.replace("/", "_") + ".json"), short_manifest)
-            store.put(prefix + "manifest.json", encoded(short_manifest))
-            model_reports.append({**short_manifest, "output_uri": "s3://" + store.bucket + "/" + prefix})
+        selected_rows, model_reports = [], []
+        if selection_enabled(spec):
+            eligible = [row for row in copy_rows if row["selected"]]
+            selected_input = sc.parallelize([encoded(row).decode() for row in eligible], partitions)
+            resumed_selection = (output / "stages/selection-copy.json").exists()
+            selected_copies = stage(sc, output, "selection-copy", owner,
+                                   lambda: selected_input.mapPartitions(
+                                       lambda it: copy_partition(it, spec, owner, selection=True)))
+            if resumed_selection:
+                if selected_copies.mapPartitions(
+                        lambda it: verify_copies_partition(it, spec, owner, selection=True)).sum() != len(eligible):
+                    raise ValueError("Resumed selected outputs failed verification")
+            selected_rows = selected_copies.collect()
+            if (len(selected_rows) != len(eligible)
+                    or {r["path"] for r in selected_rows} != {r["path"] for r in eligible}):
+                raise ValueError("Selection copy receipts are incomplete")
+            groups = defaultdict(list)
+            for row in selected_rows:
+                groups[row["model"]].append(row)
+            for model in spec["models"]:
+                group = groups.get(model, [])
+                prefix = store.selections[model]
+                require_inventory(store, prefix, {"dt=" + r["date"] + "/" + r["path"]: r["bytes"] for r in group})
+                if not group:
+                    continue
+                short_manifest = selection_manifest(model, group, spec)
+                write_json(output / "model-manifests" / (model.replace("/", "_") + ".json"), short_manifest)
+                store.put(prefix + "manifest.json", encoded(short_manifest))
+                model_reports.append({**short_manifest, "output_uri": "s3://" + store.bucket + "/" + prefix})
         final_source, _ = store.read(store.source + "manifest.json", etag=manifest_etag)
         if final_source != raw_manifest:
             raise ValueError("Source changed before final completion")
@@ -328,6 +347,8 @@ def run(spec_path, output, partitions=512):
             "selected_bytes": sum(r["bytes"] for r in selected_rows),
             "accepted": counts["accepted"], "quarantined": counts["quarantined_trajectories"],
             "policy": spec["policy"], "models": model_reports,
+            "publish_selection": selection_enabled(spec),
+            "comparison_mode": spec.get("comparison_mode", "prefix"),
             "retained_models": dict(sorted(Counter(r["model"] for r in kept).items())),
             "verification": {"source_hashes": len(rows), "normalized_target_hashes": len(copy_rows),
                              "selected_target_hashes": len(selected_rows),
@@ -336,7 +357,7 @@ def run(spec_path, output, partitions=512):
         }
         write_json(output / "report.json", report)
         (output / "SUCCEEDED").write_text("All target bytes, inventories, metrics and lineage checked.\n")
-        emit("publication_completed", kept=len(kept), selected=len(selected_rows), models=len(groups))
+        emit("publication_completed", kept=len(kept), selected=len(selected_rows), models=len(model_reports))
         return report
     finally:
         spark.stop()
