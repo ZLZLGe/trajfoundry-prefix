@@ -10,6 +10,7 @@ from pathlib import Path
 import attribution_core
 import audit_core
 import run_audit
+import local_runtime
 
 from trajectory_prefix.storage import Reader, StorageConfig, atomic_bytes
 
@@ -43,18 +44,16 @@ def main():
     parser.add_argument('--input-empty-coverage', required=True)
     parser.add_argument('--output', required=True)
     parser.add_argument('--partitions', type=int, required=True)
+    parser.add_argument('--local-workers', type=int, default=0)
     parser.add_argument('--s3-endpoint', required=True)
     parser.add_argument('--s3-region', required=True)
     parser.add_argument('--s3-credentials-file', required=True)
     args = parser.parse_args()
     for name in ('input_index', 'input_coverage', 'input_empty_coverage'):
         assert (Path(getattr(args, name)) / '_SUCCESS').is_file()
-    from pyspark.sql import SparkSession
-
     os.umask(0o077)
-    spark = SparkSession.builder.appName('independent-candidate-attribution').getOrCreate()
+    spark = local_runtime.spark_session('independent-candidate-attribution', args.local_workers)
     sc = spark.sparkContext
-    assert sc.master.startswith('k8s://')
     sc.setLogLevel('WARN')
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=False)
@@ -63,7 +62,7 @@ def main():
                             credentials_file=args.s3_credentials_file)
     archive = out / 'independent-attribution.zip'
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as target:
-        for module in (audit_core, attribution_core, run_audit):
+        for module in (audit_core, attribution_core, run_audit, local_runtime):
             target.write(module.__file__, Path(module.__file__).name)
     sc.addPyFile(str(archive))
     partitions = args.partitions
@@ -94,7 +93,7 @@ def main():
         run_audit.save(selected.mapPartitions(lambda it: evidence_partition(it, storage, out / 'evidence')),
                        out / 'examples')
         report = {'passed': True, 'diagnostic_only': True, 's3_writes': False,
-                  'input_count': count, 'unique_directed_pairs': actual,
+                  'input_count': count, 'unique_directed_pairs': actual, 'spark_master': sc.master,
                   'pair_reason_counts': [[list(k), v] for k, v in sorted(reason_counts)],
                   'mode_reason_counts': [[list(k), v] for k, v in sorted(mode_counts)],
                   'distinct_short_reason_sets': [[list(k), v] for k, v in sorted(record_counts)],

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import audit_core as audit
 import run_audit
+import local_runtime
 
 from trajectory_prefix.storage import StorageConfig
 
@@ -31,17 +32,15 @@ def main():
     p.add_argument('--expected-count', type=int, required=True)
     p.add_argument('--output', required=True)
     p.add_argument('--partitions', type=int, required=True)
+    p.add_argument('--local-workers', type=int, default=0)
     p.add_argument('--s3-endpoint', required=True)
     p.add_argument('--s3-region', required=True)
     p.add_argument('--s3-credentials-file', required=True)
     args = p.parse_args()
     assert (Path(args.input_index) / '_SUCCESS').is_file()
-    from pyspark.sql import SparkSession
-
     os.umask(0o077)
-    spark = SparkSession.builder.appName('independent-reasoning-envelope-probe').getOrCreate()
+    spark = local_runtime.spark_session('independent-reasoning-envelope-probe', args.local_workers)
     sc = spark.sparkContext
-    assert sc.master.startswith('k8s://')
     sc.setLogLevel('WARN')
     started = time.monotonic()
     out = Path(args.output)
@@ -50,7 +49,7 @@ def main():
                             credentials_file=args.s3_credentials_file)
     archive = out / 'independent-audit.zip'
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as z:
-        for module in (audit, run_audit):
+        for module in (audit, run_audit, local_runtime):
             z.write(Path(module.__file__), Path(module.__file__).name)
     sc.addPyFile(str(archive))
     try:

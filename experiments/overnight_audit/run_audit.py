@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 
 import audit_core as audit
+import local_runtime
 
 from trajectory_prefix.storage import Reader, StorageConfig, atomic_bytes, reference
 
@@ -60,16 +61,14 @@ def main():
     p.add_argument('--expected-count', type=int, required=True)
     p.add_argument('--output', required=True)
     p.add_argument('--partitions', type=int, default=512)
+    p.add_argument('--local-workers', type=int, default=0)
     p.add_argument('--s3-endpoint', required=True)
     p.add_argument('--s3-region', required=True)
     p.add_argument('--s3-credentials-file', required=True)
     args = p.parse_args()
-    from pyspark.sql import SparkSession
-
     os.umask(0o077)
-    spark = SparkSession.builder.appName('independent-retained-prefix-audit').getOrCreate()
+    spark = local_runtime.spark_session('independent-retained-prefix-audit', args.local_workers)
     sc = spark.sparkContext
-    assert sc.master.startswith('k8s://'), 'Business scans require Spark Cluster'
     sc.setLogLevel('WARN')
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=False)
@@ -86,6 +85,7 @@ def main():
     archive = out / 'independent-audit.zip'
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as z:
         z.write(Path(audit.__file__), 'audit_core.py')
+        z.write(Path(local_runtime.__file__), 'local_runtime.py')
     sc.addPyFile(str(archive))
     partitions = args.partitions
     try:
