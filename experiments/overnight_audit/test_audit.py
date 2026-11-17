@@ -130,3 +130,17 @@ def test_reasoning_only_census_includes_whitespace_visible_output():
     a['messages'].extend([{'role': 'assistant', 'content': '\n\n', 'reasoning_content': 'thinking'},
                           {'role': 'assistant', 'content': '  '}])
     assert attribution_core.empty_counts(a) == {'reasoning_only': 1, 'fully_empty': 1}
+
+
+def test_structure_probe_can_find_mid_history_notice_without_erasing_user():
+    a, b = node(), node()
+    b['messages'].insert(2, {'role': 'system', 'content': 'The Bash tool shell is Git Bash.'})
+    am, _ = audit.stable_messages(a)
+    bm, _ = audit.stable_messages(b)
+    assert not audit.is_prefix(am, bm)
+    assert audit.is_prefix(audit.view(am, 'without_system_developer'),
+                           audit.view(bm, 'without_system_developer'))
+    b['messages'][0]['content'] = 'a different user instruction'
+    bm, _ = audit.stable_messages(b)
+    assert not audit.is_prefix(audit.view(am, 'without_system_developer'),
+                               audit.view(bm, 'without_system_developer'))

@@ -103,6 +103,8 @@ def view(messages, mode):
     result = copy.deepcopy(messages)
     if mode == 'without_empty_visible_assistant':
         return [m for m in result if m != {'role': 'assistant', 'content': ''}]
+    if mode == 'without_system_developer':
+        return [m for m in result if m['role'] not in {'system', 'developer'}]
     if mode in {'without_headers', 'body_format'}:
         while result and result[0]['role'] in {'system', 'developer'}:
             result.pop(0)
