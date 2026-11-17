@@ -122,3 +122,11 @@ def test_attribution_reports_cross_scope_and_existing_rule_residual():
     result = attribution_core.explain(row, a, b)
     assert result['reason'] == 'identity_boundary'
     assert result['identity_differences'] == ['session_or_date']
+
+
+def test_reasoning_only_census_includes_whitespace_visible_output():
+    import attribution_core
+    a = node()
+    a['messages'].extend([{'role': 'assistant', 'content': '\n\n', 'reasoning_content': 'thinking'},
+                          {'role': 'assistant', 'content': '  '}])
+    assert attribution_core.empty_counts(a) == {'reasoning_only': 1, 'fully_empty': 1}

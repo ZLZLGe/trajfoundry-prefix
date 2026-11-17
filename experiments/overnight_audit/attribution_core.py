@@ -25,6 +25,14 @@ def only_assistant_leading_space(messages):
     return result
 
 
+def empty_counts(node):
+    """Use the same visible-content trimming as the stable comparison view."""
+    selected = [m for m in node['messages'] if m['role'] == 'assistant'
+                and not m['content'].rstrip(' \t\r\n') and not m.get('tool_calls')]
+    return {'reasoning_only': sum(any(m.get(k) for k in audit.REASONING) for m in selected),
+            'fully_empty': sum(not any(m.get(k) for k in audit.REASONING) for m in selected)}
+
+
 def explain(row, a, b):
     av, _ = audit.stable_messages(a)
     bv, _ = audit.stable_messages(b)
@@ -79,6 +87,7 @@ def explain(row, a, b):
         'production_covers': projected, 'production_raw_covers': raw,
         'eligible_same_scope': same_scope and not isolation,
         'message_counts': [len(ap.tokens), len(bp.tokens)],
+        'empty_assistant_counts_after_visible_trimming': [empty_counts(a), empty_counts(b)],
         'common_production_messages': common,
         'only_assistant_leading_whitespace_would_cover': leading,
         'first_difference': audit.difference(pm[0][common], pm[1][common])
