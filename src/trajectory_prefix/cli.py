@@ -41,14 +41,18 @@ def main():
         "--review-headers", action="store_true",
         help="Review retained equal message bodies with different leading system/developer text",
     )
+    parser.add_argument(
+        "--review-pairs", action="store_true",
+        help="Examine every pair in a small published corpus without deleting records",
+    )
     args = parser.parse_args()
     if "://" in args.output or not Path(args.output).is_absolute():
         parser.error("--output must be an absolute local/shared filesystem path")
     if args.partitions < 1:
         parser.error("--partitions must be positive")
-    if args.check_only and args.review_headers:
-        parser.error("Choose either --check-only or --review-headers")
-    if args.reuse_decisions and (args.check_only or args.review_headers):
+    if sum((args.check_only, args.review_headers, args.review_pairs)) > 1:
+        parser.error("Choose only one comparison/review mode")
+    if args.reuse_decisions and (args.check_only or args.review_headers or args.review_pairs):
         parser.error("Review modes must read and compare the actual input again")
     rules = tuple(filter(None, args.rules.split(",")))
     if set(rules) - set(Policy().rules):
@@ -61,6 +65,15 @@ def main():
     spark = builder.getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
     try:
+        if args.review_pairs:
+            from .pair_review import run as review_pairs
+
+            report = review_pairs(
+                spark, args.input_plan, Path(args.output), partitions=args.partitions,
+                policy=Policy(rules, extra_information=args.extra_information),
+            )
+            print(json.dumps(report, ensure_ascii=False), flush=True)
+            return
         if args.review_headers:
             from .header_review import run as review_headers
 

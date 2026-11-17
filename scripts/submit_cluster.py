@@ -109,14 +109,15 @@ def command(
     input_cache=True,
     check_only=False,
     review_headers=False,
+    review_pairs=False,
     output_layout="flat",
     reuse_decisions=None,
 ):
-    if (check_only or review_headers) and (probe or audit_run):
+    if (check_only or review_headers or review_pairs) and (probe or audit_run):
         raise ValueError("Comparison checks require --input-plan")
-    if check_only and review_headers:
-        raise ValueError("Choose either --check-only or --review-headers")
-    if reuse_decisions and (check_only or review_headers or probe or audit_run):
+    if sum((check_only, review_headers, review_pairs)) > 1:
+        raise ValueError("Choose only one comparison/review mode")
+    if reuse_decisions and (check_only or review_headers or review_pairs or probe or audit_run):
         raise ValueError("Only output publication may reuse previous decisions")
     if not config["master"].startswith("k8s://https://"):
         raise ValueError("Cluster submission requires Kubernetes HTTPS")
@@ -219,6 +220,8 @@ def command(
             result += ["--check-only"]
         if review_headers:
             result += ["--review-headers"]
+        if review_pairs:
+            result += ["--review-pairs"]
     return pod, result
 
 
@@ -268,6 +271,10 @@ def main():
         "--review-headers", action="store_true",
         help="Review retained equal bodies with different leading instructions",
     )
+    p.add_argument(
+        "--review-pairs", action="store_true",
+        help="Examine every pair in a small published corpus without deleting records",
+    )
     p.add_argument("--execute", action="store_true")
     a = p.parse_args()
     c = json.loads(a.config.read_text())
@@ -280,11 +287,11 @@ def main():
         p.error("Resources and partitions must be positive")
     if sum(bool(x) for x in (a.probe, a.input_plan, a.audit_run)) != 1:
         p.error("Choose exactly one of --input-plan, --probe, --audit-run")
-    if (a.check_only or a.review_headers) and not a.input_plan:
+    if (a.check_only or a.review_headers or a.review_pairs) and not a.input_plan:
         p.error("Comparison checks require --input-plan")
-    if a.check_only and a.review_headers:
-        p.error("Choose either --check-only or --review-headers")
-    if a.reuse_decisions and (not a.input_plan or a.check_only or a.review_headers):
+    if sum((a.check_only, a.review_headers, a.review_pairs)) > 1:
+        p.error("Choose only one comparison/review mode")
+    if a.reuse_decisions and (not a.input_plan or a.check_only or a.review_headers or a.review_pairs):
         p.error("Only output publication with --input-plan may reuse previous decisions")
     audit_run = shared_path(a.audit_run, c["shared_root"]) if a.audit_run else None
     if audit_run and not (audit_run / "SUCCEEDED").is_file():
@@ -313,6 +320,7 @@ def main():
         input_cache=not a.no_input_cache,
         check_only=a.check_only,
         review_headers=a.review_headers,
+        review_pairs=a.review_pairs,
         output_layout=a.output_layout,
         reuse_decisions=reuse_decisions,
     )
