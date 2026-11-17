@@ -253,7 +253,8 @@ def main():
     p.add_argument("--output-layout", choices=("flat", "hash2"), default="flat")
     p.add_argument("--reuse-decisions")
     p.add_argument(
-        "--extra-information", choices=("tools_only", "preserve_all"), default="tools_only"
+        "--extra-information",
+        choices=("messages_only", "tools_only", "preserve_all"), default="tools_only"
     )
     p.add_argument(
         "--no-input-cache", action="store_true",

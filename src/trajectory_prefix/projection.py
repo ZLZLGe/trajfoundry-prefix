@@ -33,7 +33,7 @@ class Policy:
     extra_information: str = "tools_only"
 
     def __post_init__(self):
-        if self.extra_information not in {"tools_only", "preserve_all"}:
+        if self.extra_information not in {"messages_only", "tools_only", "preserve_all"}:
             raise ValueError("Unknown extra-information policy")
 
 
@@ -240,7 +240,12 @@ def project(node: dict[str, Any], dataset: str, date: str, policy: Policy = Poli
         guard["metadata_extra"] = {k: v for k, v in md.items() if k not in METADATA_PROVENANCE}
         guard["is_subagent"] = bool((node.get("completeness") or {}).get("is_subagent"))
     assets = {}
-    for field in ASSETS if policy.extra_information == "preserve_all" else {"tools"}:
+    fields = (
+        ASSETS if policy.extra_information == "preserve_all"
+        else {"tools"} if policy.extra_information == "tools_only"
+        else set()
+    )
+    for field in fields:
         items = node.get(field) or []
         if not isinstance(items, list):
             raise ValueError(f"{field} must be an array")

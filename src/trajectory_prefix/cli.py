@@ -16,7 +16,8 @@ def main():
     parser.add_argument("--master", default=None)
     parser.add_argument("--partitions", type=int, default=64)
     parser.add_argument(
-        "--extra-information", choices=("tools_only", "preserve_all"), default="tools_only"
+        "--extra-information",
+        choices=("messages_only", "tools_only", "preserve_all"), default="tools_only"
     )
     parser.add_argument(
         "--rules",
