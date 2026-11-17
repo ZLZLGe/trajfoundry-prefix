@@ -10,6 +10,11 @@ SHA256-checked. Every diagnostic coverage candidate was checked again against
 both complete JSON objects. DeepInfra remains pending; no conclusion here
 claims to cover its final retained set.
 
+The later removal-side audit found a separate correctness concern: a literal
+`<MASK>` fill-in-the-blank task marker was treated as a redaction wildcard, and
+two more published merges have conflicting task evidence in captured reasoning.
+The retained-side checks below do not establish that every removal was safe.
+
 ## Existing-policy candidates
 
 The independent stable-message view found no FreeRouter coverage candidates,
@@ -226,6 +231,60 @@ not a proposed production policy.
 Complete private source JSON, hashes, per-pair judgments, and excerpt packets
 are retained outside Git in the audit run and in the user's delivery folder.
 They are not committed to this repository.
+
+## Removal-side check: task placeholders and masked semantic conflicts
+
+The 11,324 additional masking removals include 56 equal-length pairs: 38 Boyue
+and 18 TokenPlan. All 56 pairs were reread locally with their recorded hashes,
+together with 10 additional extension pairs chosen for different fields and
+labels. This is 66 complete pairs, not a second full scan of all removals.
+Twelve selected pairs were manually reviewed at their differences and task
+context, then two more equal-length cases were followed up. Nine selected
+extension pairs are consistent with masked replay; two selected pairs remain
+ambiguous. These targeted samples do not estimate a population error rate.
+
+Three TokenPlan pairs were traced through both masked-raw collection envelopes,
+the original normalized objects, and the actual v010 publication:
+
+1. **Task placeholder classified as redaction.** A climate-science question has
+   three literal `<MASK>` blanks in one request, versus one blank and two
+   explicit `aerosol` words in the other. Both responses answer `aerosol`.
+   Both captured reasoning texts also identify the different blank counts.
+   The literal task markers are part of the question; this is a confirmed
+   example of the masking comparison ignoring a real task-format difference.
+2. **Conflicting title targets.** One output is wholly `<ADDRESS>`, while its
+   captured reasoning repeatedly describes and counts characters for a title
+   about one town. The retained request and answer concern a different town.
+   This is strong evidence of a semantic mismatch, but the first unmasked
+   request cannot be reconstructed from the available masked capture.
+3. **Different inputs with the same empty extraction result.** Both outputs
+   are `[]`. One captured reasoning text analyzes a remark about an Internet
+   addiction center; the other analyzes a different remark about prior advice.
+   A broad `<ORGANIZATION>` span covers the difference in the first request.
+   Equal extractor outputs do not establish equal task inputs. This is another
+   strong semantic-conflict example, subject to the same masked-input limit.
+
+All six request bodies match their respective normalized histories exactly.
+The response role, visible content and reasoning also match exactly; the
+climate pair's normalized form omits an empty `tool_calls` field. Capture formats
+are `ORIGINAL`, but the objects were read from masked-raw: that does not mean
+they contain pre-masking network bytes.
+
+For each pair, the successful publication manifest lists only the retained
+trajectory, its currently downloaded v010 object matches that manifest's SHA256,
+and one published lineage row contains both raw request sources. The full
+manifest has 1,282,175 file entries: 1,282,174 trajectories plus `lineage.jsonl`.
+A GET on each removed path returned AccessDenied; this was not treated as proof
+of absence. Publication membership is established by the complete manifest and
+lineage instead.
+
+This evidence adds one confirmed non-redaction task-marker match and two strong
+semantic-conflict cases; it does not justify labeling all 56 equal-length pairs
+incorrect. The existing rule deliberately ignores reasoning, so these findings
+also illustrate a limitation of the comparison policy, not an implementation
+disagreement. No production rule, running job, or published object was changed.
+Private source objects, receipts, judgments and publication proofs are in
+`manual-mask-removals/` under the independent audit run, outside Git.
 
 ## Execution and remaining work
 

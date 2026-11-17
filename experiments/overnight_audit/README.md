@@ -11,6 +11,13 @@ Input is the complete retained set of the 2026-10-30 publication, read back from
 the published version with frozen byte lengths and SHA256. Intermediate evidence
 stays on shared/local disk. No S3 mutation or automatic merge is implemented here.
 
+The additional `review_mask_removals_local.py` reads the original normalized
+objects referenced by completed masking removals. It collects all equal-length
+pairs and a deterministic selection of extension pairs, checks complete source
+hashes, and exposes differences without the masking matcher. Its `passed` flag
+means the evidence was collected successfully, not that the removals are
+semantically correct. Manual findings and raw-source follow-ups are separate.
+
 The diagnostic views probe text formatting, serialized arguments, leading headers,
 runtime notices, mask label differences, identity boundaries, and adjacent branch
 histories. A transformed prefix is only a review candidate. In particular, removing
