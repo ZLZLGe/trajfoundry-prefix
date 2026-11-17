@@ -24,6 +24,9 @@ class DiskRecords(Mapping):
             raise KeyError(key)
         return json.loads(row[0])
 
+    def __contains__(self, key):
+        return self.db.execute("SELECT 1 FROM entries WHERE path=?", (key,)).fetchone() is not None
+
     def __iter__(self):
         return (row[0] for row in self.db.execute("SELECT path FROM entries ORDER BY path"))
 
