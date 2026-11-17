@@ -262,6 +262,20 @@ def group_candidates(item):
 
     lengths = [-r["message_count"] for r in rows]
     shapes, plain, masked = defaultdict(list), defaultdict(list), defaultdict(list)
+    line_shapes, line_plain, line_masked = defaultdict(list), defaultdict(list), defaultdict(list)
+    unknown_lines = defaultdict(list)
+
+    def line_metadata(row, position):
+        bounds = row.get("string_bounds", ())
+        content = bounds[position].get("content", ()) if position < len(bounds) else ()
+        return content[9] if len(content) > 9 else None
+
+    def anchor_lines(info):
+        # A bounded index, not a sampling of trajectories or candidate pairs.
+        # Every permitted match must satisfy any selected literal-line anchor.
+        size = len(info[2])
+        return range(size) if size <= 16 else sorted({i * (size - 1) // 15 for i in range(16)})
+
     for j, row in enumerate(rows):
         for p, shape in enumerate(row["shapes"]):
             shapes[p, shape].append(j)
@@ -269,6 +283,18 @@ def group_candidates(item):
                 masked[p, shape].append(j)
             else:
                 plain[p, shape, row["hashes"][p]].append(j)
+        for p, shape in enumerate(row["shapes"][:2]):
+            info = line_metadata(row, p)
+            if info is None:
+                unknown_lines[p].append(j)
+                continue
+            key = (p, shape, info[0])
+            line_shapes[key].append(j)
+            for line in anchor_lines(info):
+                if info[2][line]:
+                    line_masked[key, line].append(j)
+                else:
+                    line_plain[key, line, info[1][line * 32:(line + 1) * 32]].append(j)
     for i, a in enumerate(rows):
         if not a["mask_count"]:
             continue
@@ -280,6 +306,25 @@ def group_candidates(item):
             count = sum(map(len, buckets)) + len(rows) - end
             if count < best:
                 best, options = count, (*buckets, range(end, len(rows)))
+        for p, shape in enumerate(a["shapes"][:2]):
+            info = line_metadata(a, p)
+            if info is None:
+                continue
+            end = bisect_right(lengths, -(p + 1))
+            key = (p, shape, info[0])
+            fallback = (unknown_lines[p], range(end, len(rows)))
+            buckets = (line_shapes[key], *fallback)
+            count = sum(map(len, buckets))
+            if count < best:
+                best, options = count, buckets
+            for line in anchor_lines(info):
+                if info[2][line]:
+                    continue
+                buckets = (line_plain[key, line, info[1][line * 32:(line + 1) * 32]],
+                           line_masked[key, line], *fallback)
+                count = sum(map(len, buckets))
+                if count < best:
+                    best, options = count, buckets
         for j in chain.from_iterable(options or []):
             b = rows[j]
             if i == j or (b["mask_count"] and j < i):

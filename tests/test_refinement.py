@@ -110,3 +110,29 @@ def test_multiline_candidates_preserve_raw_matches_and_reject_literal_changes(tm
             expected.add(frozenset((ar["id"], br["id"])))
     assert candidates == expected
     assert len(expected) == 2
+
+
+def test_literal_line_index_equals_exhaustive_candidates_with_legacy_and_short_rows(tmp_path):
+    rng = random.Random(711086)
+    nodes = []
+    for i in range(90):
+        node = sample(str(i), True)
+        node["messages"][0]["content"] = rng.choice([
+            "prefix\nAlice\n<REASON>\nend", "prefix\n<PERSON>\n<REASON>\nend",
+            "prefix\nBobby\n<REASON>\nend", "prefix\r\nAlice\n<REASON>\nend",
+            "\n".join(["literal " + str(j) for j in range(40)] + ["<PERSON>"]),
+        ])
+        node["messages"][1]["content"] = rng.choice(["", "<PERSON>\nanswer", "Alice\nanswer"])
+        if i % 4 == 0:
+            node["messages"] = node["messages"][:2]
+        nodes.append(node)
+    rows = sorted(indexed(tmp_path, nodes), key=priority)
+    for i, row in enumerate(rows):
+        if i % 3 == 0:
+            row["string_bounds"] = tuple({k: v[:9] for k, v in bounds.items()}
+                                         for bounds in row["string_bounds"])
+    expected = {(b["ref"]["id"], a["ref"]["id"]) for a, b in itertools.combinations(rows, 2)
+                if (a["mask_count"] or b["mask_count"]) and possible_pair(a, b)}
+    actual = [(r["short"]["id"], r["long"]["id"]) for r in group_candidates(("x", rows))]
+    assert set(actual) == expected
+    assert len(actual) == len(expected)
