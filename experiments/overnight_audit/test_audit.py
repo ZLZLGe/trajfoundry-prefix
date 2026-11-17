@@ -86,3 +86,39 @@ def test_empty_visible_probe_reveals_omitted_thought_turn_without_changing_basel
     assert audit.is_prefix(audit.view(am, 'without_empty_visible_assistant'),
                            audit.view(bm, 'without_empty_visible_assistant'))
     assert len(audit.view(am, 'stable_messages')) == 5
+
+
+def test_attribution_distinguishes_missing_user_and_redacted_identity():
+    import attribution_core
+    a = node()
+    a['messages'][0]['role'] = 'system'
+    b = copy.deepcopy(a)
+    row = {'short': ref(1), 'long': ref(2), 'modes': ['stable_messages']}
+    result = attribution_core.explain(row, a, b)
+    assert result['reason'] == 'protected:no_user_assistant_exchange'
+    a, b = node(), node()
+    a['normalization_audit'] = {'issues': [{'code': 'metadata_session_id_masked'}]}
+    result = attribution_core.explain(row, a, b)
+    assert result['reason'] == 'protected:redacted_identity'
+
+
+def test_attribution_recognizes_leading_space_without_changing_policy():
+    import attribution_core
+    a, b = node(), node()
+    a['messages'][-1]['content'] = '\n\ndone'
+    row = {'short': ref(1), 'long': ref(2), 'modes': ['text_format']}
+    result = attribution_core.explain(row, a, b)
+    assert result['reason'] == 'assistant_leading_whitespace_only'
+    assert not result['production_covers'] and not result['production_raw_covers']
+    assert a['messages'][-1]['content'] == '\n\ndone'
+
+
+def test_attribution_reports_cross_scope_and_existing_rule_residual():
+    import attribution_core
+    a, b = node(), node()
+    row = {'short': ref(1), 'long': ref(2), 'modes': ['cross_identity']}
+    assert attribution_core.explain(row, a, b)['reason'] == 'covered_by_unchanged_production_rule'
+    b['metadata']['session_id'] = 'another-session'
+    result = attribution_core.explain(row, a, b)
+    assert result['reason'] == 'identity_boundary'
+    assert result['identity_differences'] == ['session_or_date']
