@@ -1,4 +1,4 @@
-"""Audit every retained file and every deletion using an independent raw-object verifier."""
+"""Audit published files or full comparison decisions with an independent raw-object verifier."""
 
 import argparse
 import hashlib
@@ -11,7 +11,13 @@ from pyspark.sql import SparkSession
 
 from trajectory_prefix.projection import Policy
 from trajectory_prefix.residuals import review_files
-from trajectory_prefix.storage import Reader, StorageConfig, output_relative_path, reference
+from trajectory_prefix.storage import (
+    Reader,
+    StorageConfig,
+    file_sha256,
+    output_relative_path,
+    reference,
+)
 from trajectory_prefix.verification import raw_covers
 
 
@@ -20,7 +26,7 @@ def identity(entry):
     return r["id"], (r["bytes"], r["sha256"])
 
 
-def verify_partition(lines, source, storage, policy, layout="flat"):
+def verify_partition(lines, source, storage, policy, layout="flat", *, check_only=False):
     reader = Reader(storage)
     output_reader = Reader(StorageConfig())
     counts = Counter()
@@ -33,19 +39,27 @@ def verify_partition(lines, source, storage, policy, layout="flat"):
             counts[(g, "input")] += 1
             counts[(g, decision["status"])] += 1
         if decision["status"] == "kept":
-            target = dict(ref, local_path=str(Path(source) / output_relative_path(ref, layout)))
-            # Disallow S3 fallback when proving that the output actually exists.
-            target.pop("uri", None)
-            output_reader.read(target)
+            if check_only:
+                reader.read(ref)
+            else:
+                target = dict(ref, local_path=str(Path(source) / output_relative_path(ref, layout)))
+                # Disallow S3 fallback when proving that the output actually exists.
+                target.pop("uri", None)
+                output_reader.read(target)
             for g in group:
-                counts[(g, "output_hash_verified")] += 1
+                metric = "retained_input_hash_verified" if check_only else "output_hash_verified"
+                counts[(g, metric)] += 1
         elif decision["status"] == "removed":
             retained = reference(decision["retained"])
-            target = dict(
-                retained, local_path=str(Path(source) / output_relative_path(retained, layout))
-            )
-            target.pop("uri", None)
-            short, long = reader.node(ref), output_reader.node(target)
+            short = reader.node(ref)
+            if check_only:
+                long = reader.node(retained)
+            else:
+                target = dict(
+                    retained, local_path=str(Path(source) / output_relative_path(retained, layout))
+                )
+                target.pop("uri", None)
+                long = output_reader.node(target)
             if not raw_covers(short, long, ref, retained, policy):
                 raise RuntimeError("Independent witness verification failed: " + ref["id"])
             strict = raw_covers(short, long, ref, retained, replace(policy, rules=()))
@@ -58,6 +72,15 @@ def verify_partition(lines, source, storage, policy, layout="flat"):
                 counts[(g, "witness_verified")] += 1
                 counts[(g, "strict_witness" if strict else "robust_witness")] += 1
                 counts[(g, "required:" + ("+".join(required) or "none"))] += 1
+            if policy.extra_information == "messages_only":
+                with_tools = replace(policy, extra_information="tools_only")
+                requires_ignoring_tools = not raw_covers(short, long, ref, retained, with_tools)
+                metric = (
+                    "requires_ignoring_tool_definitions" if requires_ignoring_tools
+                    else "tools_covered_witness"
+                )
+                for g in group:
+                    counts[(g, metric)] += 1
         else:
             raise ValueError("Unknown decision status")
     yield from counts.items()
@@ -125,15 +148,18 @@ def main():
         raise RuntimeError("Source run is incomplete")
     output.mkdir(parents=True, exist_ok=False)
     initial = json.loads((source / "report.json").read_text())
-    if initial.get("check_only"):
-        raise RuntimeError("A check-only run has no published trajectories to audit")
+    check_only = bool(initial.get("check_only"))
+    if not (source / "decisions/_SUCCESS").is_file():
+        raise RuntimeError("Source decisions are incomplete")
+    if file_sha256(Path(initial["input_plan"])) != initial["input_plan_sha256"]:
+        raise RuntimeError("Source input plan changed after comparison")
     policy_config = dict(initial["policy"])
     policy_config["rules"] = tuple(policy_config["rules"])
     policy_config.setdefault("extra_information", "preserve_all")
     policy = Policy(**policy_config)
     layout = initial.get("output_layout", "flat")
     storage = StorageConfig(a.s3_endpoint, a.s3_region, a.s3_credentials_file, a.cache_dir)
-    manifest_sha = verify_metadata(source, initial)
+    manifest_sha = None if check_only else verify_metadata(source, initial)
     spark = SparkSession.builder.appName("trajectory-prefix-audit").getOrCreate()
     sc = spark.sparkContext
     sc.setLogLevel("WARN")
@@ -160,20 +186,23 @@ def main():
         kept = decisions.filter(lambda line: json.loads(line)["status"] == "kept").map(
             lambda line: identity(json.loads(line)["record"])
         )
-        plan = sc.textFile(str(source / "retained-input.jsonl"), minPartitions=a.partitions).map(
-            lambda line: identity(json.loads(line))
-        )
-        if (
-            plan.count() != initial["kept_count"]
-            or plan.keys().distinct(a.partitions).count() != initial["kept_count"]
-        ):
-            raise RuntimeError("Retained plan contains missing or duplicate entries")
-        if (
-            kept.fullOuterJoin(plan, a.partitions)
-            .filter(lambda row: row[1][0] != row[1][1])
-            .take(1)
-        ):
-            raise RuntimeError("Retained plan differs from kept decisions")
+        if kept.count() != initial["kept_count"]:
+            raise RuntimeError("Retained decisions do not match the report")
+        if not check_only:
+            plan = sc.textFile(str(source / "retained-input.jsonl"), minPartitions=a.partitions).map(
+                lambda line: identity(json.loads(line))
+            )
+            if (
+                plan.count() != initial["kept_count"]
+                or plan.keys().distinct(a.partitions).count() != initial["kept_count"]
+            ):
+                raise RuntimeError("Retained plan contains missing or duplicate entries")
+            if (
+                kept.fullOuterJoin(plan, a.partitions)
+                .filter(lambda row: row[1][0] != row[1][1])
+                .take(1)
+            ):
+                raise RuntimeError("Retained plan differs from kept decisions")
         removed_targets = decisions.filter(
             lambda line: json.loads(line)["status"] == "removed"
         ).map(lambda line: identity(json.loads(line)["retained"]))
@@ -185,36 +214,45 @@ def main():
             raise RuntimeError("Deletion points to a non-retained or different witness")
         counts = dict(
             decisions.mapPartitions(
-                lambda rows: verify_partition(rows, str(source), storage, policy, layout)
+                lambda rows: verify_partition(
+                    rows, str(source), storage, policy, layout, check_only=check_only
+                )
             )
             .reduceByKey(lambda x, y: x + y)
             .collect()
         )
+        retained_metric = "retained_input_hash_verified" if check_only else "output_hash_verified"
         if (
-            counts.get(("all", "output_hash_verified"), 0) != initial["kept_count"]
+            counts.get(("all", retained_metric), 0) != initial["kept_count"]
             or counts.get(("all", "witness_verified"), 0) != initial["removed_count"]
         ):
             raise RuntimeError("Not all outputs and witnesses were checked")
-        parts = [str(path) for path in sorted((source / "decisions").glob("part-*"))]
-        residual = dict(
-            sc.parallelize(parts, min(a.partitions, len(parts)) or 1)
-            .mapPartitions(
-                lambda paths: review_files(paths, str(source), str(output), policy, layout)
+        residual = {}
+        if not check_only:
+            parts = [str(path) for path in sorted((source / "decisions").glob("part-*"))]
+            residual = dict(
+                sc.parallelize(parts, min(a.partitions, len(parts)) or 1)
+                .mapPartitions(
+                    lambda paths: review_files(paths, str(source), str(output), policy, layout)
+                )
+                .reduceByKey(lambda x, y: x + y)
+                .collect()
             )
-            .reduceByKey(lambda x, y: x + y)
-            .collect()
-        )
         report = {
             "passed": True,
             "spark_master": sc.master,
             "spark_version": spark.version,
             "source_run": str(source),
+            "audit_mode": "input_decisions" if check_only else "published_files",
+            "policy": initial["policy"],
+            "input_plan_sha256": initial["input_plan_sha256"],
             "manifest_sha256": manifest_sha,
             "counts": {
                 group: {k: v for (g, k), v in counts.items() if g == group}
                 for group in sorted({g for g, k in counts})
             },
             "residual_review": {
+                "performed": not check_only,
                 "definition": "Adjacent retained prefixes within each original sorted partition; at least four messages and 80% common prefix of the shorter record.",
                 "limitation": "This does not discover every possible alternative normalization, particularly differences in the first two messages.",
                 "counts": {
@@ -224,7 +262,10 @@ def main():
             },
         }
         (output / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
-        (output / "SUCCEEDED").write_text("all outputs and witnesses verified\n")
+        (output / "SUCCEEDED").write_text(
+            "all retained inputs and witnesses verified\n" if check_only
+            else "all outputs and witnesses verified\n"
+        )
         print(json.dumps(report), flush=True)
     finally:
         spark.stop()
