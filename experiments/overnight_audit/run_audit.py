@@ -1,4 +1,4 @@
-"""Cluster-only full retained-set diagnostics; writes only to the shared run dir."""
+"""Full retained-set diagnostics; writes only to the shared run directory."""
 import argparse
 import hashlib
 import json

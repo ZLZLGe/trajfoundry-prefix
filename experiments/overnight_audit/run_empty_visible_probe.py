@@ -8,8 +8,8 @@ import zipfile
 from pathlib import Path
 
 import audit_core as audit
-import run_audit
 import local_runtime
+import run_audit
 
 from trajectory_prefix.storage import StorageConfig
 

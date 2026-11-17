@@ -1,4 +1,4 @@
-"""Cluster-only explanation of verified candidates; no production changes."""
+"""Explain verified candidates locally or on Cluster; no production changes."""
 import argparse
 import hashlib
 import json
@@ -9,8 +9,8 @@ from pathlib import Path
 
 import attribution_core
 import audit_core
-import run_audit
 import local_runtime
+import run_audit
 
 from trajectory_prefix.storage import Reader, StorageConfig, atomic_bytes
 
