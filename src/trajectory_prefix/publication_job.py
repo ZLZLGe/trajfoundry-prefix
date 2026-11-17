@@ -264,14 +264,22 @@ def run(spec_path, output, partitions=512):
             raise ValueError("Raw source accounting does not reconcile")
         merged_file = output / "lineage.jsonl"
         if not merged_file.exists():
+            sorted_lineage = stage(sc, output, "sorted-lineage", owner,
+                                   lambda: merged.sortBy(lambda r: r["path"], numPartitions=partitions))
+            if sorted_lineage.count() != len(kept):
+                raise ValueError("Sorted lineage count differs from retained count")
+            sorted_path = Path(json.loads((output / "stages/sorted-lineage.json").read_text())["path"])
             temp = merged_file.with_suffix(".jsonl." + uuid.uuid4().hex + ".tmp")
             with temp.open("wb") as stream:
-                for row in merged.sortBy(lambda r: r["path"], numPartitions=partitions).toLocalIterator():
-                    value = row["lineage"]
-                    _LineageRecord.model_validate(value)
-                    if value["trajectory_id"] != by_path[row["path"]]["trajectory_id"]:
-                        raise ValueError("Merged lineage representative ID changed")
-                    stream.write(encoded(value))
+                for part in sorted(sorted_path.glob("part-*")):
+                    with part.open() as records:
+                        for line in records:
+                            row = json.loads(line)
+                            value = row["lineage"]
+                            _LineageRecord.model_validate(value)
+                            if value["trajectory_id"] != by_path[row["path"]]["trajectory_id"]:
+                                raise ValueError("Merged lineage representative ID changed")
+                            stream.write(encoded(value))
             temp.replace(merged_file)
         merged_entry = {"path": "lineage.jsonl", "bytes": merged_file.stat().st_size,
                         "sha256": file_sha256(merged_file)}
