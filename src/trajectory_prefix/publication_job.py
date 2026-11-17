@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import time
 import uuid
 import zipfile
@@ -181,6 +182,10 @@ def run(spec_path, output, partitions=512):
         spark.stop()
         raise ValueError("Business publication requires Spark Cluster")
     sc.setLogLevel("WARN")
+    # Indexes are reconstructible from frozen shared evidence; random SQLite
+    # lookups belong on the Driver's local scratch volume, not on shared NFS.
+    scratch = tempfile.TemporaryDirectory(prefix="prefix-publication-index-")
+    index_root = Path(scratch.name)
     package = output / ("publication-package-" + uuid.uuid4().hex + ".zip")
     with zipfile.ZipFile(package, "w", zipfile.ZIP_DEFLATED) as archive:
         for module in (trajectory_prefix, trajfoundry):
@@ -201,7 +206,7 @@ def run(spec_path, output, partitions=512):
 
         large = not selection_enabled(spec)
         decisions, prior_report = read_decisions(
-            spec, source, output / ("decisions-" + uuid.uuid4().hex + ".sqlite") if large else None)
+            spec, source, index_root / "decisions.sqlite" if large else None)
         emit("source_verified", input_count=len(decisions), kept_count=prior_report["kept_count"],
              normalized_uri=spec["normalized_uri"], publish_selection=selection_enabled(spec),
              selection_version=spec.get("selection_version"))
@@ -213,7 +218,7 @@ def run(spec_path, output, partitions=512):
         if large:
             inspected_path = json.loads((output / "stages/source-inspection.json").read_text())["path"]
             inspected_records = DiskRecords.from_parts(
-                output / ("inspected-" + uuid.uuid4().hex + ".sqlite"), inspected_path)
+                index_root / "inspected.sqlite", inspected_path)
             rows = inspected_records.view()
         else:
             rows = inspected.collect()
@@ -319,7 +324,7 @@ def run(spec_path, output, partitions=512):
         if large:
             copy_path = json.loads((output / "stages/normalized-copy.json").read_text())["path"]
             copy_records = DiskRecords.from_parts(
-                output / ("copies-" + uuid.uuid4().hex + ".sqlite"), copy_path)
+                index_root / "copies.sqlite", copy_path)
             copy_rows = copy_records.view()
         else:
             copy_rows = copies.collect()
@@ -391,4 +396,9 @@ def run(spec_path, output, partitions=512):
         emit("publication_completed", kept=len(kept), selected=len(selected_rows), models=len(model_reports))
         return report
     finally:
+        for name in ("decisions", "inspected_records", "copy_records"):
+            collection = locals().get(name)
+            if hasattr(collection, "db"):
+                collection.db.close()
+        scratch.cleanup()
         spark.stop()

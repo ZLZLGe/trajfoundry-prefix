@@ -11,6 +11,7 @@ class DiskRecords(Mapping):
         self.db = sqlite3.connect(path)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=NORMAL")
+        self.db.execute("PRAGMA cache_size=-65536")
         self.db.execute("CREATE TABLE entries (path TEXT PRIMARY KEY, payload TEXT NOT NULL, "
                         "status TEXT, identifier TEXT UNIQUE)")
 
