@@ -72,6 +72,8 @@ def explain(row, a, b):
         reason = 'runtime_notice_difference'
     elif 'without_empty_visible_assistant' in row['modes']:
         reason = 'empty_visible_assistant_position'
+    elif 'without_system_developer' in row['modes']:
+        reason = 'system_developer_inside_history'
     elif 'body_format' in row['modes']:
         reason = 'combined_header_notice_format'
     elif 'marker_labels' in row['modes']:
