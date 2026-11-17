@@ -17,6 +17,8 @@ uv run pytest
 
 真实业务运行后，使用 [独立核验与残余检查](docs/validation.md) 检查每个保留文件和每条删除关系。
 
+需要将已核验结果写入新的 S3 版本时，使用单独的 [发布入口](docs/publishing.md)。它复用冻结的去留决策，逐文件验证目标哈希，并从保留集生成按模型划分的指标筛选目录。
+
 分组条件、Spark 分区方式和大 `_sub_N` 编号的真实例子见 [分组说明](docs/grouping.md)。
 
 617,853 条真实标准化轨迹的渠道覆盖、合并数量、独立核验及残余边界见 [2026-11-17 验证报告](docs/validation-20261117.md)。
@@ -26,3 +28,5 @@ uv run pytest
 2026-10-10 全部 6,499,393 条轨迹取消顶层工具定义约束后，净多合并 23,643 条；两种策略均通过全量独立核验，见 [只按 messages 比较的完整对比](docs/validation-oct10-messages-only.md)。
 
 TokenPlan `classification/50000-filter/` 的 165 条完整轨迹使用 `messages_only` 后保留 56 条，全部输出及 109 条合并关系独立核验通过，见 [筛选集聚合报告](docs/validation-tokenplan-50000-filter.md)。
+
+SXF `2026-08-21` 已发布标准化 `v004`（90,589 条）及各模型筛选 `v002`（33,191 条），见 [SXF 发布结果](docs/publication-sxf-v004.md)。
