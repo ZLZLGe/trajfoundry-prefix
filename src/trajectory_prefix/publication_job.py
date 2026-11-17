@@ -20,7 +20,7 @@ from .publication import (
     sha256,
     write_json,
 )
-from .storage import file_sha256
+from .storage import file_sha256, relative_path
 
 
 def emit(event, **values):
@@ -93,7 +93,34 @@ def require_inventory(store, prefix, expected, *, allow_manifest=True):
     if allow_manifest:
         actual.pop("manifest.json", None)
     if actual != expected:
-        raise ValueError("Target file collection or byte counts differ: " + prefix)
+        raise ValueError("File collection or byte counts differ: " + prefix)
+
+
+def source_inventory(spec, source, manifest_bytes):
+    """Include only ancillary objects recorded by the frozen full-prefix scan."""
+    receipt_path = Path(spec["source_inventory_receipt"])
+    if file_sha256(receipt_path) != spec["source_inventory_sha256"]:
+        raise ValueError("Frozen source inventory receipt changed")
+    receipt = json.loads(receipt_path.read_text())
+    files = {entry["path"]: entry["bytes"] for entry in source["files"]}
+    trajectory_files = {k: v for k, v in files.items() if k != "lineage.jsonl"}
+    if (receipt["source_uri"] != spec["source_uri"]
+            or receipt["source_manifest_sha256"] != spec["source_manifest_sha256"]
+            or receipt["input_plan_sha256"] != spec["input_plan_sha256"]
+            or receipt.get("complete_requested_prefix") is not True
+            or receipt["input_count"] != len(trajectory_files)
+            or receipt["input_bytes"] != sum(trajectory_files.values())):
+        raise ValueError("Frozen source inventory does not match publication inputs")
+    files["manifest.json"] = manifest_bytes
+    seen = set()
+    for entry in receipt["non_trajectory_files"]:
+        path, size = relative_path(entry["path"]), entry["bytes"]
+        if (path in seen or path in trajectory_files or type(size) is not int or size < 0
+                or (path in files and files[path] != size)):
+            raise ValueError("Invalid ancillary source inventory")
+        seen.add(path)
+        files[path] = size
+    return files
 
 
 def run(spec_path, output, partitions=512):
@@ -141,8 +168,8 @@ def run(spec_path, output, partitions=512):
         source = json.loads(raw_manifest)
         _Manifest.model_validate(source)
         write_json(output / "source-manifest.json", source)
-        expected_inventory = {entry["path"]: entry["bytes"] for entry in source["files"]}
-        require_inventory(store, store.source, expected_inventory)
+        expected_inventory = source_inventory(spec, source, len(raw_manifest))
+        require_inventory(store, store.source, expected_inventory, allow_manifest=False)
         decisions, prior_report = read_decisions(spec, source)
         emit("source_verified", input_count=len(decisions), kept_count=prior_report["kept_count"],
              normalized_uri=spec["normalized_uri"], selection_version=spec["selection_version"])

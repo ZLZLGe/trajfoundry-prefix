@@ -6,6 +6,7 @@ import pytest
 
 from trajectory_prefix.publication import (
     PublicationStore,
+    encoded,
     merge_origins,
     model_component,
     normalized_manifest,
@@ -13,6 +14,7 @@ from trajectory_prefix.publication import (
     selection_manifest,
     sha256,
 )
+from trajectory_prefix.publication_job import require_inventory, source_inventory
 
 
 @pytest.fixture
@@ -112,3 +114,35 @@ def test_retry_rechecks_bytes_and_rejects_foreign_owner(spec):
     foreign = PublicationStore(spec, "owner", client=FakeStore(b"valid", owner="other"))
     with pytest.raises(ValueError, match="collision"):
         foreign.copy(foreign.source + "a.jsonl", foreign.normalized + "a.jsonl", expected, "src")
+
+
+def test_source_inventory_includes_only_frozen_diagnostics(tmp_path, spec):
+    source = {"files": [{"path": "a.jsonl", "bytes": 200},
+                        {"path": "lineage.jsonl", "bytes": 900}]}
+    receipt = {"source_uri": spec["source_uri"], "source_manifest_sha256": "m",
+               "input_plan_sha256": "p", "complete_requested_prefix": True,
+               "input_count": 1, "input_bytes": 200,
+               "non_trajectory_files": [{"path": "diagnostics/input.ndjson", "bytes": 300},
+                                        {"path": "lineage.jsonl", "bytes": 900},
+                                        {"path": "manifest.json", "bytes": 100}]}
+    receipt_path = tmp_path / "inventory.json"
+    receipt_path.write_bytes(encoded(receipt))
+    spec = {**spec, "source_manifest_sha256": "m", "input_plan_sha256": "p",
+            "source_inventory_receipt": str(receipt_path),
+            "source_inventory_sha256": sha256(receipt_path.read_bytes())}
+    expected = source_inventory(spec, source, 100)
+    assert expected == {"a.jsonl": 200, "lineage.jsonl": 900, "manifest.json": 100,
+                        "diagnostics/input.ndjson": 300}
+    store = SimpleNamespace(inventory=lambda prefix: dict(expected))
+    require_inventory(store, "source/", expected, allow_manifest=False)
+    for changed in ({**expected, "unrecorded.jsonl": 200},
+                    {**expected, "diagnostics/unrecorded.ndjson": 10},
+                    {**expected, "diagnostics/input.ndjson": 301}):
+        store = SimpleNamespace(inventory=lambda prefix: changed)
+        with pytest.raises(ValueError, match="File collection"):
+            require_inventory(store, "source/", expected, allow_manifest=False)
+    with pytest.raises(ValueError, match="ancillary"):
+        source_inventory(spec, source, 101)
+    receipt_path.write_bytes(encoded({**receipt, "input_count": 2}))
+    with pytest.raises(ValueError, match="receipt changed"):
+        source_inventory(spec, source, 100)

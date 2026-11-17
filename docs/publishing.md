@@ -16,6 +16,8 @@
 
 发布配置包含 `source_uri`（标准化日期分区）、`normalized_uri`（新日期分区）、`selection_base_uri`、`selection_version`、`models`、`dataset`、`date`、三个 `min_*` 阈值，以及已核验的 `source_run`、`audit_report`、`recheck_report`、`policy`、`source_manifest_sha256`、`input_plan_sha256`、`decision_files_sha256`。S3 设置为 `s3_endpoint`、`s3_region`、`s3_credentials_file`，必须与 Cluster 配置相同。决策文件摘要是排序后的 `{part文件名: SHA256}` 经本模块 `encoded` 序列化后的 SHA256。
 
+`source_inventory_receipt` 指向全前缀探查时冻结的清单回执，`source_inventory_sha256` 固定其内容。回执须包含源 URI、manifest 和 input plan 摘要、轨迹数与字节数、`complete_requested_prefix=true`、`non_trajectory_files`（path、bytes）。源目录中未列入 manifest 的旧诊断文件也必须与该清单完全一致；未知文件或大小变化均失败。诊断文件不复制到新版本。
+
 ## 数据与来源
 
 - 整套源轨迹按冻结清单校验字节和 SHA256。保留轨迹使用与源版本匹配的契约重新校验文件名、统一字段和派生指标。
