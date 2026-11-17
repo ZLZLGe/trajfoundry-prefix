@@ -76,6 +76,10 @@ def test_multiline_bounds_keep_every_independently_verified_match():
         assert string_oracle(pattern, value)
         assert bounds_possible(string_bound(pattern), string_bound(value))
         assert bounds_possible(string_bound(value), string_bound(pattern))
+        assert bounds_possible(string_bound(pattern, include_words=True),
+                               string_bound(value, include_words=True))
+        assert bounds_possible(string_bound(value, include_words=True),
+                               string_bound(pattern, include_words=True))
 
 
 def test_prompt_markers_do_not_hide_different_literal_lines():
@@ -136,3 +140,57 @@ def test_literal_line_index_equals_exhaustive_candidates_with_legacy_and_short_r
     actual = [(r["short"]["id"], r["long"]["id"]) for r in group_candidates(("x", rows))]
     assert set(actual) == expected
     assert len(actual) == len(expected)
+
+
+def test_word_index_matches_exhaustive_filter_in_both_directions_and_partial_legacy(tmp_path):
+    nodes = []
+    for text in ("check AlphaProject with <PERSON> before ending",
+                 "check AlphaProject with alice before ending",
+                 "check BetaProject with alice before ending",
+                 "check <PROJECT> with alice before ending",
+                 "<MASKED>", "AlphaProject<PERSON>", "AlphaProjectAlice",
+                 "<PERSON>AlphaProject", "AliceAlphaProject", "研究中文AlphaProject"):
+        node = sample(str(len(nodes)), True)
+        node["messages"][0]["content"] = text
+        nodes.append(node)
+    rows = sorted(indexed(tmp_path, nodes), key=priority)
+    # Mix current, fully old and partly old word-index metadata.
+    for i, row in enumerate(rows):
+        if i % 3 == 0:
+            row["string_bounds"] = tuple({k: v[:10] for k, v in item.items()}
+                                         for item in row["string_bounds"])
+        elif i % 3 == 1:
+            row["string_bounds"][1]["content"] = row["string_bounds"][1]["content"][:10]
+    expected = {(b["ref"]["id"], a["ref"]["id"]) for a, b in itertools.combinations(rows, 2)
+                if (a["mask_count"] or b["mask_count"]) and possible_pair(a, b)}
+    actual = [(r["short"]["id"], r["long"]["id"]) for r in group_candidates(("x", rows))]
+    assert set(actual) == expected
+    assert len(actual) == len(expected)
+    for i, j in itertools.combinations(range(len(nodes)), 2):
+        a, b = nodes[i]["messages"][0]["content"], nodes[j]["messages"][0]["content"]
+        if string_oracle(a, b):
+            assert bounds_possible(string_bound(a, include_words=True),
+                                   string_bound(b, include_words=True))
+
+
+def test_word_index_preserves_opposite_directions_between_messages(tmp_path):
+    texts = [
+        ("AlphaProject handles Alice", "<PROJECT> handles Bobby"),
+        ("<PROJECT> handles Alice", "BetaProject handles Bobby"),
+        ("GammaProject handles Alice", "DeltaProject handles Bobby"),
+        ("GammaProject handles <PERSON>", "DeltaProject handles <PERSON>"),
+    ]
+    nodes = []
+    for i, (first, second) in enumerate(texts):
+        node = sample(str(i), True)
+        node["messages"][0]["content"] = first
+        node["messages"][1]["content"] = second
+        nodes.append(node)
+    rows = indexed(tmp_path, nodes)
+    candidates = {frozenset((r["short"]["id"], r["long"]["id"]))
+                  for r in group_candidates(("x", rows))}
+    assert raw_relaxed_covers(nodes[0], nodes[1], rows[0]["ref"], rows[1]["ref"], POLICY)
+    assert frozenset((rows[0]["ref"]["id"], rows[1]["ref"]["id"])) in candidates
+    for i, j in itertools.combinations(range(len(nodes)), 2):
+        if raw_relaxed_covers(nodes[i], nodes[j], rows[i]["ref"], rows[j]["ref"], POLICY):
+            assert frozenset((rows[i]["ref"]["id"], rows[j]["ref"]["id"])) in candidates

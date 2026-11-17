@@ -76,8 +76,9 @@ def index_partition(entries, storage):
                "labels": dict(labels), "templates": dict(templates),
                "mask_flags": tuple(flags), "hashes": tuple(digest(t) for t in p.tokens),
                "shapes": shapes, "isolation": p.isolation_reason,
-               "string_bounds": tuple({key: string_bound(text) for key, text in message_strings(m)}
-                                      for m in messages)}
+               "string_bounds": tuple({key: string_bound(text, include_words=i < 2 and key == "content")
+                                       for key, text in message_strings(m)}
+                                      for i, m in enumerate(messages))}
 
 
 def census_partition(rows):

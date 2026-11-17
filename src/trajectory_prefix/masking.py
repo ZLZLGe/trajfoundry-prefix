@@ -196,7 +196,25 @@ def priority(row):
     return -row["message_count"], row["mask_count"], -row["ref"]["bytes"], row["ref"]["id"]
 
 
-def string_bound(value):
+WORD = re.compile(r"\w{5,}")
+
+
+def word_features(value):
+    # Hashes are necessary-condition indexes only; collisions retain candidates.
+    values = {digest(m.group().encode())[:8] for m in WORD.finditer(value)}
+    literals = set()
+    segments = parts(value)
+    for i, segment in enumerate(segments):
+        for match in WORD.finditer(segment):
+            # A marker may extend an adjacent word, so an anchor needs a fixed
+            # word boundary on each side (or the true string boundary).
+            if (match.start() == 0 and i or match.end() == len(segment) and i < len(segments) - 1):
+                continue
+            literals.add(digest(match.group().encode())[:8])
+    return b"".join(sorted(values)), b"".join(sorted(literals))
+
+
+def string_bound(value, *, include_words=False):
     found = list(markers(value))
     literal_length = len(value) - sum(m.end() - m.start() for m in found)
     # Placeholders cannot consume CR or LF. Keep their exact order and hashes
@@ -207,11 +225,12 @@ def string_bound(value):
     line_info = (digest("".join(lines[1::2]).encode()),
                  b"".join(digest(line.encode()) for line in lines[::2]),
                  bytes(bool(markers(line)) for line in lines[::2]))
-    return (len(value), digest(value.encode()), value[:64], value[-64:],
+    result = (len(value), digest(value.encode()), value[:64], value[-64:],
             (value[:found[0].start()][:64] if found else value[:64]),
             (value[found[-1].end():][-64:] if found else value[-64:]),
             literal_length + len(found), literal_length + len(found) * MAX_SPAN,
             bool(found), line_info)
+    return (*result, word_features(value)) if include_words else result
 
 
 def bounds_possible(a, b):
@@ -228,8 +247,15 @@ def bounds_possible(a, b):
         p, v = pattern[9], value[9]
         if p[0] != v[0]:
             return False
-        return all(masked or p[1][i * 32:(i + 1) * 32] == v[1][i * 32:(i + 1) * 32]
-                   for i, masked in enumerate(p[2]))
+        if not all(masked or p[1][i * 32:(i + 1) * 32] == v[1][i * 32:(i + 1) * 32]
+                   for i, masked in enumerate(p[2])):
+            return False
+        if len(pattern) > 10 and len(value) > 10:
+            words = {value[10][0][i:i + 8] for i in range(0, len(value[10][0]), 8)}
+            if any(pattern[10][1][i:i + 8] not in words
+                   for i in range(0, len(pattern[10][1]), 8)):
+                return False
+        return True
 
     return direction(a, b) or direction(b, a)
 
@@ -264,6 +290,17 @@ def group_candidates(item):
     shapes, plain, masked = defaultdict(list), defaultdict(list), defaultdict(list)
     line_shapes, line_plain, line_masked = defaultdict(list), defaultdict(list), defaultdict(list)
     unknown_lines = defaultdict(list)
+    word_values, word_patterns = defaultdict(list), defaultdict(list)
+    no_word_anchor = defaultdict(list)
+    anchors = []
+
+    def indexed_words(row, position, kind):
+        bounds = row.get("string_bounds", ())
+        content = bounds[position].get("content", ()) if position < len(bounds) else ()
+        if len(content) < 11:
+            return ()
+        value = content[10][kind]
+        return (value[i:i + 8] for i in range(0, len(value), 8))
 
     def line_metadata(row, position):
         bounds = row.get("string_bounds", ())
@@ -277,6 +314,9 @@ def group_candidates(item):
         return range(size) if size <= 16 else sorted({i * (size - 1) // 15 for i in range(16)})
 
     for j, row in enumerate(rows):
+        for p in range(min(2, row["message_count"])):
+            for word in indexed_words(row, p, 0):
+                word_values[p, word].append(j)
         for p, shape in enumerate(row["shapes"]):
             shapes[p, shape].append(j)
             if row["mask_flags"][p]:
@@ -295,6 +335,17 @@ def group_candidates(item):
                     line_masked[key, line].append(j)
                 else:
                     line_plain[key, line, info[1][line * 32:(line + 1) * 32]].append(j)
+    for j, row in enumerate(rows):
+        row_anchors = []
+        for p in range(min(2, row["message_count"])):
+            options = [(p, word) for word in indexed_words(row, p, 1)]
+            anchor = min(options, key=lambda key: len(word_values[key])) if options else None
+            row_anchors.append(anchor)
+            if anchor is None:
+                no_word_anchor[p].append(j)
+            else:
+                word_patterns[anchor].append(j)
+        anchors.append(row_anchors)
     for i, a in enumerate(rows):
         if not a["mask_count"]:
             continue
@@ -325,6 +376,19 @@ def group_candidates(item):
                 count = sum(map(len, buckets))
                 if count < best:
                     best, options = count, buckets
+        for p, anchor in enumerate(anchors[i]):
+            if anchor is None:
+                continue
+            # Match direction may differ between messages. Both directions
+            # must use the SAME position, with legacy/unanchored/short fallbacks.
+            reverse = [word_patterns.get((p, word), ())
+                       for word in indexed_words(a, p, 0)]
+            end = bisect_right(lengths, -(p + 1))
+            buckets = (word_values[anchor], *reverse, no_word_anchor[p],
+                       range(end, len(rows)))
+            count = sum(map(len, buckets))
+            if count < best:
+                best, options = count, (sorted(set(chain.from_iterable(buckets))),)
         for j in chain.from_iterable(options or []):
             b = rows[j]
             if i == j or (b["mask_count"] and j < i):
