@@ -348,6 +348,37 @@ distinct pairs. This targeted check neither estimates an overall error rate nor
 invalidates the confirmed short-task placeholder issue and two strong semantic
 conflicts above. Private evidence is in `long-mask-boundaries/` outside Git.
 
+## Early DeepInfra candidate check, before completion
+
+The original job is still generating candidates. A read-only capture froze
+313,589,760 bytes of its active partition's temporary output. The immutable
+prefix contains 267,016 complete candidate rows, all in the previously identified
+large group, referencing 34,497 distinct short IDs and 36,339 distinct long IDs.
+Its final 1,060 bytes are an incomplete JSON row and are excluded. These are
+partial candidate counts, not completed matches, removals, or publication counts.
+
+Eleven pairs were selected at sequence positions and file-size boundaries;
+all 22 complete original normalized objects were read and hash-checked. The
+model is Atria-Dawn throughout. Eight are longer-history examples with masking
+differences near the last assistant. Three are three-message command-review
+requests with equal answers but clearly different commands.
+
+The unchanged code bundled with `control-refine-02` was imported locally.
+Both its next-stage pair matcher and its independent raw-object oracle accept
+the eight longer-history examples and reject all three different-command pairs.
+This is a useful boundary check: appearing in a coarse candidate file does not
+mean the pair passes comparison, and passing comparison does not yet establish
+the final representative or publication decision. The broad marker recognizer
+also lists literal severity labels `[HIGH]` and `[MEDIUM]` as redaction markers;
+the command differences still reject the three observed pairs. No actual
+mismerge is established by these candidate examples.
+
+The frozen byte prefix, complete source JSON, manual notes, code hashes and both
+comparison receipts are in `deepinfra-partial-candidates/` outside Git. The
+reproduction script uses only those existing local files. No trajectory command
+was executed, no new Cluster job was submitted, and the original run and core
+code remain unchanged. Final DeepInfra retained-set analysis is still pending.
+
 ## Execution and remaining work
 
 The user revised the objective to require local experiments. The completed

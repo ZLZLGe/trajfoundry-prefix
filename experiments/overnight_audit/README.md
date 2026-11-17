@@ -30,6 +30,12 @@ removing only leading line breaks, only complete blank lines, or general leading
 ASCII whitespace. The first content line's indentation survives the blank-line
 view. This refines the diagnostic count and does not alter production matching.
 
+`review_partial_candidates_local.py` reproduces a deliberately separate check
+of an immutable prefix captured from the unfinished DeepInfra candidate file.
+It requires the snapshot and all selected source objects to exist locally,
+checks their hashes, and loads the unchanged original job's comparison code.
+Candidate counts and local pair checks are never reported as final removals.
+
 The diagnostic views probe text formatting, serialized arguments, leading headers,
 runtime notices, mask label differences, identity boundaries, and adjacent branch
 histories. A transformed prefix is only a review candidate. In particular, removing
