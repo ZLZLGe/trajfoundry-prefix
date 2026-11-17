@@ -3,7 +3,10 @@
 This worktree starts at `checkpoint-20261118-before-independent-audit`.
 Production core files and approved matching policy are unchanged.
 
-All business scans run through Spark Cluster in `root.datacenter.pjcc.agent_trajectory`.
+After the user's execution constraint changed on 2026-11-18, all further
+experiments run on the current host using `local[8]` or local Python threads.
+Previously completed Cluster evidence is retained. Pending experimental Cluster
+submitters were stopped; the original production DeepInfra job continues.
 Input is the complete retained set of the 2026-10-30 publication, read back from
 the published version with frozen byte lengths and SHA256. Intermediate evidence
 stays on shared/local disk. No S3 mutation or automatic merge is implemented here.

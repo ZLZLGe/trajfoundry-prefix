@@ -38,6 +38,87 @@ Counts from different diagnostic views overlap and are not additive removal
 counts. Local attribution deduplicates directed pairs and counts distinct short
 records while separating eligibility protections from content differences.
 
+## Completed local attribution
+
+All 105,073 different directed candidate pairs were reread in full and explained
+locally. They involve 104,555 different short records: Boyue 10,775, FreeRouter
+2, and TokenPlan 93,778. No candidate was covered by the unchanged production
+policy, and its projected and raw verifiers agreed on every pair. This conclusion
+applies to the candidates found by these diagnostics, not every conceivable
+semantic equivalence.
+
+| Dataset | Primary explanation | Pairs |
+|---|---|---:|
+| Boyue | Redacted-identity protection | 10,393 |
+| Boyue | Leading system/developer messages | 335 |
+| Boyue | Empty visible assistant positions | 28 |
+| Boyue | Text/argument formatting | 22 |
+| Boyue | Runtime notice; mixed differences | 1; 1 |
+| FreeRouter | Leading system/developer messages; runtime notice | 1; 1 |
+| TokenPlan | Identity boundary | 79,134 |
+| TokenPlan | Leading system/developer messages | 6,611 |
+| TokenPlan | Assistant leading whitespace only | 5,992 |
+| TokenPlan | Runtime notices | 983 |
+| TokenPlan | Mixed header/notice/format differences | 832 |
+| TokenPlan | Empty visible assistant positions | 397 |
+| TokenPlan | Text/argument formatting | 298 |
+| TokenPlan | Missing user/assistant exchange | 34 |
+| TokenPlan | Unresolved tool binding; tool-name mismatch | 6; 4 |
+
+These are mutually exclusive explanations for pairs. A short record can have
+different witnesses and different explanations; pair counts are not removal
+counts. In particular, the Boyue redacted-identity bucket involves 10,388
+different short records, whereas the stable-message-only bucket was 10,379
+pairs. The difference comes from adding the other diagnostic views.
+
+In the 5,992 leading-whitespace pairs, the first difference is at the short
+record's final message in 5,985 cases. In 5,782 cases, that first difference is
+two leading newlines versus none. Five complete deterministic examples were
+read locally: the only stable-message difference in each was two leading
+newlines on the final assistant message, and the complete histories aligned
+after that change. This is a concrete source of presentation duplicates, not
+evidence that every leading space can safely be stripped: indentation may carry
+meaning, and the production rule remains unchanged.
+
+The leading-header sample demonstrates why this bucket is not automatically
+removable. Examples include elapsed runtime timestamps, a saved command
+approval, changed agent-to-agent roles, changed model identity/response
+instructions, different social context, additional battery-design advice, and
+retrieved code memories. Some are dynamic annotations; others change the
+instructions or evidence supplied to the model.
+
+## Mid-history system/developer probe
+
+Removing every system/developer message was used only as a broad diagnostic.
+Of 8,411 pairs outside the stable view, 1,455 were not already covered by the
+leading-header view. All 1,455 were reread and attributed locally: 808 TokenPlan
+pairs lack a user/assistant exchange and remain protected; 644 TokenPlan and
+3 Boyue pairs have system/developer differences inside an otherwise aligned
+history, without those eligibility protections.
+
+Among the 644 TokenPlan pairs, the descriptive content categories are 436 other
+system/developer content, 153 token-budget plus planning hints, 20 token-budget
+only, 6 Git Bash notices, 1 planning hint, and 28 mixed categories. The 3 Boyue
+pairs include 2 with complete cached Read-file evidence in system messages and
+1 with an agent catalog plus other instructions. Ignoring these messages could
+discard real file content or change the task context. The 647 pairs are review
+candidates, not authorized deletions, and are not additive to the other views.
+
+## Original collection evidence for changed user IDs
+
+One cross-user TokenPlan example was traced to both original masked-raw
+requests. Their message counts are 30 and 32, with an exact full prefix of all
+30 earlier request messages. Receipt times differ by 5.954 seconds; the second
+request arrived 1.07 seconds after the earlier response completed. The raw
+envelopes already have different `source_user_id` values, and each normalized
+`metadata.user_id` exactly inherits its own raw value.
+
+The request bodies supply no user/session metadata, and neither record has a
+known session or end-user identity. This is strong evidence of a related
+workflow, but it does not establish the real user or the reason the collector's
+source user ID changed. The standardizer did not introduce the ID difference.
+Raw requests, source hashes, and comparisons remain outside Git.
+
 ## Manual branch review
 
 Thirty-six pairs were read, twelve per channel, in addition to the earlier three
