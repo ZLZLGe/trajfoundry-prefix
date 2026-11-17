@@ -15,8 +15,11 @@ from .projection import canonical, covers, project
 from .storage import Reader, StorageConfig, file_sha256, reference
 from .verification import raw_covers
 
-MASK = re.compile(r"<(?:PERSON|LOCATION|ID_NUMBER|EMAIL|PHONE_NUMBER|ADDRESS|IP_ADDRESS|ORGANIZATION)>")
-MODES = ("crlf", "trailing_ascii", "argument_json", "without_headers", "without_notifications")
+MASK = re.compile(
+    r"<(?:PERSON|LOCATION|ID_NUMBER|EMAIL|PHONE|PHONE_NUMBER|ADDRESS|IP_ADDRESS|ORGANIZATION)>"
+)
+MODES = ("crlf", "trailing_ascii", "argument_json", "without_headers", "without_notifications",
+         "without_headers_and_notifications")
 
 
 def reject_duplicates(items):
@@ -54,6 +57,8 @@ def argument_view(value):
 
 
 def transform(messages, mode):
+    if mode == "without_headers_and_notifications":
+        return transform(transform(messages, "without_headers"), "without_notifications")
     result = deepcopy(messages)
     if mode == "without_headers":
         while result and result[0]["role"] in {"system", "developer"}:
@@ -161,12 +166,19 @@ def review_pair(a, b, ar, br, policy):
         row["first_difference"] = {"roles": [am[common]["role"], bm[common]["role"]],
                                    "details": fields_differ(am[common], bm[common])}
     variants = {}
+    transformed = {}
     for mode in MODES:
         av, bv = transform(am, mode), transform(bm, mode)
+        transformed[mode] = (av, bv)
         variants[mode] = [prefix(av, bv), prefix(bv, av)]
     variants["redaction_placeholder_candidates"] = [
         prefix(am, bm, masked_candidate), prefix(bm, am, masked_candidate)
     ]
+    for mode in ("without_notifications", "without_headers_and_notifications"):
+        av, bv = transformed[mode]
+        variants["redaction_" + mode] = [
+            prefix(av, bv, masked_candidate), prefix(bv, av, masked_candidate)
+        ]
     row["diagnostic_prefix_candidates"] = {k:v for k,v in variants.items() if any(v)}
     if sa == sb:
         ah, bh = [[hashlib.sha256(t).digest() for t in p.tokens] for p in (ap, bp)]

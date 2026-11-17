@@ -3,7 +3,7 @@ from copy import deepcopy
 import pytest
 from test_tool_ids import sample
 
-from trajectory_prefix.pair_review import argument_view, review_pair
+from trajectory_prefix.pair_review import argument_view, masked_string_candidate, review_pair
 from trajectory_prefix.projection import Policy
 
 POLICY = Policy(extra_information="messages_only")
@@ -66,3 +66,32 @@ def test_omitted_background_notification_is_only_a_candidate():
     result = review_pair(a, b, REF, REF, POLICY)
     assert not any(result["current_covers"])
     assert result["diagnostic_prefix_candidates"]["without_notifications"] == [True, True]
+
+
+def test_phone_mask_in_numeric_output_is_a_candidate_but_not_safe_coverage():
+    a, b = sample("a", True), sample("b", True)
+    a["messages"][2]["content"] = "dist <PHONE>; goal [1.<PHONE>.1986069]"
+    b["messages"][2]["content"] = "dist 4.173200071891493; goal [1.06254773 2.1986069]"
+    result = review_pair(a, b, REF, REF, POLICY)
+    assert not any(result["current_covers"])
+    assert not any(result["independent_current_covers"])
+    assert result["diagnostic_prefix_candidates"]["redaction_placeholder_candidates"] == [True, True]
+    assert not masked_string_candidate("result <UNKNOWN>", "result changed")
+
+
+def test_combined_diagnostic_keeps_real_content_changes_visible():
+    a, b = sample("a", True), sample("b", True)
+    a["messages"].insert(0, {"role":"system", "content":"one instruction"})
+    b["messages"].insert(0, {"role":"system", "content":"another instruction"})
+    a["messages"][3]["content"] = "dist <PHONE>"
+    b["messages"][3]["content"] = "dist 4.173200071891493"
+    a["messages"].insert(4, {"role":"user", "content":"<task-notification>done</task-notification>"})
+    originals = deepcopy((a, b))
+    result = review_pair(a, b, REF, REF, POLICY)
+    assert not any(result["current_covers"])
+    assert set(result["diagnostic_prefix_candidates"]) == {
+        "redaction_without_headers_and_notifications"
+    }
+    assert (a, b) == originals
+    b["messages"][-1]["content"] = "a genuinely different answer"
+    assert not review_pair(a, b, REF, REF, POLICY)["diagnostic_prefix_candidates"]
