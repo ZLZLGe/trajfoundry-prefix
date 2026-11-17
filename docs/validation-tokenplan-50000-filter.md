@@ -2,6 +2,8 @@
 
 使用 `messages_only` 对 `s3://agent-trajectory/lakehouse/token-plan/classification/50000-filter/` 的全部现存轨迹去重：**165 条 → 56 条，减少 109 条（66.06%）**。
 
+后续对全部 56 条做了完整两两复查，发现脱敏和后台通知差异阻断的 11 条较短候选；实际保留数仍为 56。[复查结果及边界](review-tokenplan-56-retained.md)。
+
 | 模型目录 | 完整输入 | 保留 | 合并 | 减少比例 |
 |---|---:|---:|---:|---:|
 | Atria-Dawn | 43 | 32 | 11 | 25.58% |
