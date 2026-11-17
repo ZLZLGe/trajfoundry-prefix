@@ -85,6 +85,8 @@ def main():
     parser.add_argument('--publication', type=Path, required=True)
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--only-short-extensions', action='store_true',
+                        help='Read every removal with at most six messages and a longer witness.')
     args = parser.parse_args()
     os.umask(0o077)
     args.output.mkdir(parents=True, exist_ok=False)
@@ -98,10 +100,15 @@ def main():
                    for line in part.open()]
         assert len(current) == report['mask_additional_removed']
         rows.extend(current)
-    selected = select_examples(rows)
     equal = [r for r in rows if r['message_counts'][0] == r['message_counts'][1]]
-    wanted = {r['record']['id']: r for r in equal}
-    wanted.update({r['record']['id']: r for r in selected})
+    if args.only_short_extensions:
+        selected = []
+        wanted = {r['record']['id']: r for r in rows if r['message_counts'][0] <= 6
+                  and r['message_counts'][0] < r['message_counts'][1]}
+    else:
+        selected = select_examples(rows)
+        wanted = {r['record']['id']: r for r in equal}
+        wanted.update({r['record']['id']: r for r in selected})
     config = json.loads(args.config.read_text())
     storage = StorageConfig(endpoint_url=config['s3_endpoint'], region=config['s3_region'],
                             credentials_file=config['s3_credentials_file'], cache_dir=str(args.output / 'sources'))
@@ -139,7 +146,9 @@ def main():
     by_channel = collections.Counter(r['record']['dataset'] for r in equal_packets)
     whole = collections.Counter(r['record']['dataset'] for r in equal_packets if r['whole_assistant_marker_positions'])
     report = {'passed': True, 'local_only': True, 's3_writes': False,
+              'selection_scope': 'all_short_extensions' if args.only_short_extensions else 'all_equal_and_selected_extensions',
               'all_mask_removals': len(rows), 'all_equal_length_removals': len(equal),
+              'read_equal_length_pairs': len(equal_packets),
               'equal_length_by_channel': dict(by_channel), 'selected_manual_pairs': len(selected),
               'complete_pairs_read': len(packets), 'same_visible_assistants_equal_length_pairs':
               sum(p['all_visible_assistants_equal'] for p in equal_packets),

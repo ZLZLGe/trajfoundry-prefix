@@ -17,6 +17,9 @@ pairs and a deterministic selection of extension pairs, checks complete source
 hashes, and exposes differences without the masking matcher. Its `passed` flag
 means the evidence was collected successfully, not that the removals are
 semantically correct. Manual findings and raw-source follow-ups are separate.
+The `--only-short-extensions` option completes the boundary with every removed
+record of at most six messages whose retained witness is longer. Its report
+distinguishes the source population from the equal-length pairs actually read.
 
 The diagnostic views probe text formatting, serialized arguments, leading headers,
 runtime notices, mask label differences, identity boundaries, and adjacent branch

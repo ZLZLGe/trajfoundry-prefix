@@ -286,6 +286,23 @@ disagreement. No production rule, running job, or published object was changed.
 Private source objects, receipts, judgments and publication proofs are in
 `manual-mask-removals/` under the independent audit run, outside Git.
 
+A follow-up completed the entire short-record boundary: all 72 masking removals
+with at most six messages on the removed side (Boyue 41, TokenPlan 31). The
+previous check already covered all 55 equal-length pairs in this boundary;
+the remaining 17 extension pairs were read and hash-checked locally. Across
+both runs, 82 distinct complete pairs have been read; one extension example
+was intentionally present in both selections.
+
+For all 17 short extension pairs, the raw messages before the final assistant
+are exactly equal, the final tool-call IDs are exactly equal, and every visible
+difference is in that final assistant's content or arguments. All 17 contain
+tools. Three also have reasoning differences: one replaces a place name with
+a location marker; two omit reasoning in the replay. Inspection found no new
+explicit task conflict in these extension pairs. This is stronger replay
+evidence than matching a shared template and an empty classifier result, but
+does not reconstruct the hidden pre-masking values or establish an error rate
+for all 11,324 masking removals.
+
 ## Execution and remaining work
 
 The user revised the objective to require local experiments. The completed
