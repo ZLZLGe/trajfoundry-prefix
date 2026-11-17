@@ -28,7 +28,7 @@ def emit(event, **values):
     print(json.dumps({"event": event, **values}, ensure_ascii=False), flush=True)
 
 
-def read_decisions(spec, source):
+def read_decisions(spec, source, disk_path=None):
     run = Path(spec["source_run"])
     report = json.loads((run / "report.json").read_text())
     if not ((run / "SUCCEEDED").is_file() and (run / "decisions/_SUCCESS").is_file()
@@ -52,7 +52,9 @@ def read_decisions(spec, source):
     else:
         raise ValueError("Unsupported publication comparison mode")
     files = {entry["path"]: entry for entry in source["files"] if entry["path"] != "lineage.jsonl"}
-    decisions = {}
+    from .disk_records import DiskRecords
+
+    decisions = DiskRecords(disk_path) if disk_path else {}
     inventory = {}
     for path in sorted((run / "decisions").glob("part-*")):
         inventory[path.name] = file_sha256(path)
@@ -65,7 +67,12 @@ def read_decisions(spec, source):
                         or ref["uri"] != spec["source_uri"] + ref["path"]
                         or files.get(ref["path"]) != {k: ref[k] for k in ("path", "bytes", "sha256")}):
                     raise ValueError("Decisions differ from the frozen manifest")
-                decisions[ref["path"]] = row
+                if disk_path:
+                    decisions.add(ref["path"], row, ref["id"])
+                else:
+                    decisions[ref["path"]] = row
+        if disk_path:
+            decisions.commit()
     if sha256(encoded(inventory)) != spec["decision_files_sha256"]:
         raise ValueError("Frozen decisions changed")
     kept = {k for k, v in decisions.items() if v["status"] == "kept"}
@@ -81,9 +88,12 @@ def read_decisions(spec, source):
     if len(decisions) - len(kept) != report["removed_count"]:
         raise ValueError("Removal count differs from audited count")
     if mode == "placeholder-relaxed-v1":
-        from .publication_evidence import validate_mask_decisions
+        from .publication_evidence import validate_mask_decisions, validate_mask_decisions_streamed
 
-        validate_mask_decisions(spec, report, decisions)
+        if disk_path:
+            validate_mask_decisions_streamed(spec, report, decisions)
+        else:
+            validate_mask_decisions(spec, report, decisions)
     return decisions, report
 
 
@@ -187,19 +197,29 @@ def run(spec_path, output, partitions=512):
         write_json(output / "source-manifest.json", source)
         expected_inventory = source_inventory(spec, source, len(raw_manifest))
         require_inventory(store, store.source, expected_inventory, allow_manifest=False)
-        decisions, prior_report = read_decisions(spec, source)
+        from .disk_records import DiskRecords
+
+        large = not selection_enabled(spec)
+        decisions, prior_report = read_decisions(
+            spec, source, output / ("decisions-" + uuid.uuid4().hex + ".sqlite") if large else None)
         emit("source_verified", input_count=len(decisions), kept_count=prior_report["kept_count"],
              normalized_uri=spec["normalized_uri"], publish_selection=selection_enabled(spec),
              selection_version=spec.get("selection_version"))
 
         from .publication import copy_partition, inspect_partition, verify_copies_partition
-        inputs = sc.parallelize([encoded(decisions[k]).decode() for k in sorted(decisions)], partitions)
+        inputs = sc.textFile(str(Path(spec["source_run"]) / "decisions"), minPartitions=partitions).filter(bool)
         inspected = stage(sc, output, "source-inspection", owner,
                           lambda: inputs.mapPartitions(lambda rows: inspect_partition(rows, spec, owner)))
-        rows = inspected.collect()
+        if large:
+            inspected_path = json.loads((output / "stages/source-inspection.json").read_text())["path"]
+            inspected_records = DiskRecords.from_parts(
+                output / ("inspected-" + uuid.uuid4().hex + ".sqlite"), inspected_path)
+            rows = inspected_records.view()
+        else:
+            rows = inspected.collect()
         if len(rows) != len(decisions) or len({r["trajectory_id"] for r in rows}) != len(rows):
             raise ValueError("Source trajectory IDs or count are not unique")
-        by_path = {row["path"]: row for row in rows}
+        by_path = inspected_records if large else {row["path"]: row for row in rows}
         if by_path.keys() != decisions.keys():
             raise ValueError("Inspection does not cover all decisions")
         for path, row in by_path.items():
@@ -208,7 +228,7 @@ def run(spec_path, output, partitions=512):
                     or row["final_path"] != decision.get("retained", decision["record"])["path"]
                     or any(row[k] != decision["record"][k] for k in ("sha256", "bytes"))):
                 raise ValueError("Inspected row differs from frozen decision")
-        kept = [row for row in rows if row["status"] == "kept"]
+        kept = inspected_records.view("kept") if large else [row for row in rows if row["status"] == "kept"]
         if len(kept) != prior_report["kept_count"]:
             raise ValueError("Retained count differs from audited count")
 
@@ -216,10 +236,7 @@ def run(spec_path, output, partitions=512):
         lineage_entry = next(x for x in source["files"] if x["path"] == "lineage.jsonl")
         lineage_path = output / "source-lineage.jsonl"
         if not lineage_path.exists():
-            data, _ = store.read(store.source + "lineage.jsonl", lineage_entry)
-            from .storage import atomic_bytes
-            atomic_bytes(lineage_path, data, lineage_entry["sha256"])
-            del data
+            store.download(store.source + "lineage.jsonl", lineage_path, lineage_entry)
         if file_sha256(lineage_path) != lineage_entry["sha256"]:
             raise ValueError("Frozen lineage changed")
         lineage = sc.textFile(str(lineage_path), minPartitions=partitions).filter(bool).map(json.loads)
@@ -284,17 +301,23 @@ def run(spec_path, output, partitions=512):
              accepted=counts["accepted"], quarantined=counts["quarantined_trajectories"],
              unique_raw_sources=origin_count)
 
-        kept_input = sc.parallelize([encoded(row).decode() for row in kept], partitions)
+        kept_input = inspected.filter(lambda r: r["status"] == "kept").map(lambda r: encoded(r).decode())
         resumed_normalized = (output / "stages/normalized-copy.json").exists()
         copies = stage(sc, output, "normalized-copy", owner,
                        lambda: kept_input.mapPartitions(lambda it: copy_partition(it, spec, owner)))
         if resumed_normalized:
             if copies.mapPartitions(lambda it: verify_copies_partition(it, spec, owner)).sum() != len(kept):
                 raise ValueError("Resumed normalized outputs failed verification")
-        copy_rows = copies.collect()
+        if large:
+            copy_path = json.loads((output / "stages/normalized-copy.json").read_text())["path"]
+            copy_records = DiskRecords.from_parts(
+                output / ("copies-" + uuid.uuid4().hex + ".sqlite"), copy_path)
+            copy_rows = copy_records.view()
+        else:
+            copy_rows = copies.collect()
         if len(copy_rows) != len(kept) or {r["path"] for r in copy_rows} != {r["path"] for r in kept}:
             raise ValueError("Normalized copy receipts are incomplete")
-        store.put(store.normalized + "lineage.jsonl", merged_file.read_bytes())
+        store.put_file(store.normalized + "lineage.jsonl", merged_file)
         require_inventory(store, store.normalized, {f["path"]: f["bytes"] for f in candidate["files"]})
         # A source manifest change blocks publication even if all copied objects matched.
         source_after, _ = store.read(store.source + "manifest.json", etag=manifest_etag)

@@ -125,3 +125,15 @@ def test_existing_prefix_publication_remains_compatible(masking_run):
         spec[name] = str(path)
     decisions, _ = read_decisions(spec, source)
     assert len(decisions) == 3
+
+
+def test_streamed_masking_evidence_matches_in_memory_validation(masking_run):
+    root, spec, source, refs, report = masking_run
+    decisions, result = read_decisions(spec, source, root / "decisions.sqlite")
+    assert result == report
+    assert decisions["a.jsonl"]["retained"] == refs[1]
+    assert len(decisions) == 3
+    spec["audit_files_sha256"] = write_parts(root / "audit", [{
+        "record": refs[0], "retained": refs[2], "passed": True}])
+    with pytest.raises(ValueError, match="witness differs"):
+        read_decisions(spec, source, root / "invalid.sqlite")

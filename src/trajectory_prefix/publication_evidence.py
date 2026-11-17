@@ -110,3 +110,58 @@ def validate_mask_decisions(spec, report, decisions):
         checked.add(pair)
     if len(checked) != report["verification"]["retained_recheck_candidates"]:
         raise ValueError("Retained masking recheck coverage differs from report")
+
+
+def validate_mask_decisions_streamed(spec, report, decisions):
+    """Same evidence checks with uniqueness tables, without duplicate RAM indexes."""
+    run, db = Path(spec["source_run"]), decisions.db
+    db.execute("CREATE TABLE evidence_seen (kind TEXT, key TEXT, PRIMARY KEY(kind,key))")
+
+    def seen(kind, key):
+        db.execute("INSERT INTO evidence_seen VALUES(?,?)", (kind, key))
+
+    def verify_ref(ref):
+        normalized = reference(ref)
+        decision = decisions.get(normalized["path"])
+        if decision is None or decision["record"] != normalized:
+            raise ValueError("Evidence reference differs from frozen decision")
+        return decision
+
+    n = 0
+    with Path(spec["input_plan"]).open() as stream:
+        for line in stream:
+            if line.strip():
+                ref = reference(json.loads(line))
+                verify_ref(ref)
+                seen("input", ref["id"])
+                n += 1
+    if n != len(decisions):
+        raise ValueError("Incomplete masking publication input")
+    n = 0
+    for row in frozen_rows(run / "audit", spec["audit_files_sha256"]):
+        decision = verify_ref(row["record"])
+        if (decision["status"] != "removed" or row.get("passed") is not True
+                or row["retained"] != decision["retained"]):
+            raise ValueError("Independent masking witness differs from final decision")
+        seen("audit", row["record"]["id"])
+        n += 1
+    if n != report["removed_count"]:
+        raise ValueError("Incomplete independent masking audit")
+    n = 0
+    for ref in frozen_rows(run / "retained-input", spec["retained_files_sha256"]):
+        if verify_ref(ref)["status"] != "kept":
+            raise ValueError("Recheck input is not retained")
+        seen("kept", ref["id"])
+        n += 1
+    if n != report["kept_count"]:
+        raise ValueError("Incomplete retained recheck input")
+    n = 0
+    for row in frozen_rows(run / "recheck-checks", spec["recheck_files_sha256"]):
+        if (row.get("matched") is not False or verify_ref(row["short"])["status"] != "kept"
+                or verify_ref(row["long"])["status"] != "kept"):
+            raise ValueError("Invalid retained masking recheck")
+        seen("pair", json.dumps([row["short"]["id"], row["long"]["id"]]))
+        n += 1
+    if n != report["verification"]["retained_recheck_candidates"]:
+        raise ValueError("Incomplete retained masking recheck")
+    db.commit()

@@ -206,6 +206,39 @@ class PublicationStore:
             raise ValueError("Published object hash mismatch: " + key)
         return response["ETag"]
 
+    def download(self, key, path, expected):
+        path = Path(path)
+        temporary = path.with_suffix(path.suffix + ".partial")
+        response = self.client.get_object(Bucket=self.bucket, Key=key)
+        digest, size = hashlib.sha256(), 0
+        try:
+            with temporary.open("wb") as stream:
+                for chunk in response["Body"].iter_chunks(chunk_size=4 * 1024 * 1024):
+                    digest.update(chunk)
+                    size += len(chunk)
+                    stream.write(chunk)
+        finally:
+            response["Body"].close()
+        if size != expected["bytes"] or digest.hexdigest() != expected["sha256"]:
+            raise ValueError("Downloaded object differs from frozen source")
+        temporary.replace(path)
+
+    def put_file(self, key, path):
+        from .storage import file_sha256
+
+        path = Path(path)
+        expected = {"bytes": path.stat().st_size, "sha256": file_sha256(path)}
+        etag = self.existing_owned(key, expected)
+        if etag is None:
+            with path.open("rb") as stream:
+                response = self.client.put_object(
+                    Bucket=self.bucket, Key=key, Body=stream, ContentLength=expected["bytes"],
+                    ContentType="application/x-ndjson", IfNoneMatch="*",
+                    Metadata={"sha256": expected["sha256"], "publication-id": self.owner})
+            etag = response["ETag"]
+        self.verify(key, expected, etag)
+        return expected
+
     def existing_owned(self, key, expected):
         head = self.head(key)
         if head is None:
