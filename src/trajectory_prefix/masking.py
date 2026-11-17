@@ -6,7 +6,7 @@ import re
 from collections import Counter
 from contextvars import ContextVar
 
-from .projection import canonical
+from .projection import canonical, digest
 
 # These four literals were present unchanged in the paired Boyue raw capture.
 TEMPLATES = frozenset({"PACK_PATH", "SCHEMA_PATH", "KEY", "PATH"})
@@ -196,6 +196,27 @@ def priority(row):
     return -row["message_count"], row["mask_count"], -row["ref"]["bytes"], row["ref"]["id"]
 
 
+def string_bound(value):
+    found = list(markers(value))
+    literal_length = len(value) - sum(m.end() - m.start() for m in found)
+    return (len(value), digest(value.encode()), value[:64], value[-64:],
+            (value[:found[0].start()][:64] if found else value[:64]),
+            (value[found[-1].end():][-64:] if found else value[-64:]),
+            literal_length + len(found), literal_length + len(found) * MAX_SPAN,
+            bool(found))
+
+
+def bounds_possible(a, b):
+    if a[0] == b[0] and a[1] == b[1]:
+        return True
+
+    def direction(pattern, value):
+        return (pattern[8] and pattern[6] <= value[0] <= pattern[7]
+                and value[2].startswith(pattern[4]) and value[3].endswith(pattern[5]))
+
+    return direction(a, b) or direction(b, a)
+
+
 def possible_pair(a, b):
     """A necessary, complete filter; no text or prefix-hash anchors required."""
     changed = []
@@ -205,6 +226,10 @@ def possible_pair(a, b):
         if x != y:
             if not (a["mask_flags"][i] or b["mask_flags"][i]):
                 return None
+            if "string_bounds" in a and "string_bounds" in b:
+                aa, bb = a["string_bounds"][i], b["string_bounds"][i]
+                if aa.keys() != bb.keys() or any(not bounds_possible(aa[k], bb[k]) for k in aa):
+                    return None
             changed.append(i)
     return changed or None
 

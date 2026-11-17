@@ -23,6 +23,7 @@ from .masking import (
     message_matches,
     message_shape,
     message_strings,
+    string_bound,
 )
 from .projection import Policy, canonical, digest, project
 from .publication import write_json
@@ -74,7 +75,9 @@ def index_partition(entries, storage):
                "message_count": len(messages), "mask_count": sum(labels.values()),
                "labels": dict(labels), "templates": dict(templates),
                "mask_flags": tuple(flags), "hashes": tuple(digest(t) for t in p.tokens),
-               "shapes": shapes, "isolation": p.isolation_reason}
+               "shapes": shapes, "isolation": p.isolation_reason,
+               "string_bounds": tuple({key: string_bound(text) for key, text in message_strings(m)}
+                                      for m in messages)}
 
 
 def census_partition(rows):

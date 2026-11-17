@@ -6,7 +6,14 @@ from test_tool_ids import sample
 
 from trajectory_prefix.mask_job import POLICY
 from trajectory_prefix.mask_verification import raw_relaxed_covers
-from trajectory_prefix.masking import group_candidates, possible_pair, priority
+from trajectory_prefix.masking import (
+    bounds_possible,
+    group_candidates,
+    possible_pair,
+    priority,
+    string_bound,
+    string_matches,
+)
 from trajectory_prefix.refinement_job import compose, direct_audit
 from trajectory_prefix.storage import StorageConfig
 
@@ -41,3 +48,17 @@ def test_composed_mapping_is_rejected_without_direct_raw_witness(tmp_path):
     row = compose(({"record": refs[0], "retained": refs[1], "status": "removed"},
                    {"record": refs[1], "retained": refs[2], "status": "removed", "model": "test"}))
     assert list(direct_audit([row], StorageConfig()))[0]["passed"] is False
+
+
+def test_string_bounds_never_reject_a_true_bounded_match():
+    rng = random.Random(1030)
+    for _ in range(4000):
+        a = "".join(rng.choice(["a", "bb", "<PERSON>", "[SENSITIVE]", "x" * 300, "\n"])
+                    for _ in range(rng.randint(1, 6)))
+        b = "".join(rng.choice(["a", "bb", "<PHONE>", "[USER]", "x" * 300, "\n"])
+                    for _ in range(rng.randint(1, 6)))
+        if string_matches(a, b):
+            assert bounds_possible(string_bound(a), string_bound(b)), (a, b)
+    for n in [1, 63, 64, 65, 255, 256]:
+        a, b = "leading" * 30 + "[USER]" + "tail" * 30, "leading" * 30 + "x" * n + "tail" * 30
+        assert bounds_possible(string_bound(a), string_bound(b))
