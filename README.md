@@ -30,3 +30,5 @@ uv run pytest
 TokenPlan `classification/50000-filter/` 的 165 条完整轨迹使用 `messages_only` 后保留 56 条，全部输出及 109 条合并关系独立核验通过，见 [筛选集聚合报告](docs/validation-tokenplan-50000-filter.md)。
 
 SXF `2026-08-21` 已发布标准化 `v004`（90,589 条）及各模型筛选 `v002`（33,191 条），见 [SXF 发布结果](docs/publication-sxf-v004.md)。
+
+SXF v004 全量增加脱敏占位符宽松匹配后为 90,589 → 90,231 条；358 条删除独立核验通过，全部可由 USER／INTERNAL_NAME_REDACTED 解释，未发布 S3，见 [SXF 脱敏评估](docs/validation-sxf-relaxed-masking.md) 和 [规则说明](docs/relaxed-masking.md)。
