@@ -24,3 +24,5 @@ uv run pytest
 2026-10-10、10-11、10-12 的完整日期验证覆盖 12,491,591 条轨迹，不抽样，见 [完整日期验证报告](docs/validation-oct10-12-full.md)。
 
 2026-10-10 全部 6,499,393 条轨迹取消顶层工具定义约束后，净多合并 23,643 条；两种策略均通过全量独立核验，见 [只按 messages 比较的完整对比](docs/validation-oct10-messages-only.md)。
+
+TokenPlan `classification/50000-filter/` 的 165 条完整轨迹使用 `messages_only` 后保留 56 条，全部输出及 109 条合并关系独立核验通过，见 [筛选集聚合报告](docs/validation-tokenplan-50000-filter.md)。
