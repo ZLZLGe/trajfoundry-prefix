@@ -57,6 +57,7 @@ def read_decisions(spec, source, disk_path=None):
 
     decisions = DiskRecords(disk_path) if disk_path else {}
     inventory = {}
+    emit("decision_index_started", input_count=report["input_count"])
     for path in sorted((run / "decisions").glob("part-*")):
         inventory[path.name] = file_sha256(path)
         with path.open() as stream:
@@ -74,6 +75,8 @@ def read_decisions(spec, source, disk_path=None):
                     decisions[ref["path"]] = row
         if disk_path:
             decisions.commit()
+        if len(inventory) % 256 == 0:
+            emit("decision_index_progress", files=len(inventory), rows=len(decisions))
     if sha256(encoded(inventory)) != spec["decision_files_sha256"]:
         raise ValueError("Frozen decisions changed")
     kept = {k for k, v in decisions.items() if v["status"] == "kept"}
@@ -95,6 +98,7 @@ def read_decisions(spec, source, disk_path=None):
             validate_mask_decisions_streamed(spec, report, decisions)
         else:
             validate_mask_decisions(spec, report, decisions)
+    emit("decision_evidence_verified", input_count=len(decisions), kept_count=len(kept))
     return decisions, report
 
 
@@ -200,8 +204,10 @@ def run(spec_path, output, partitions=512):
         source = json.loads(raw_manifest)
         _Manifest.model_validate(source)
         write_json(output / "source-manifest.json", source)
+        emit("source_manifest_verified", files=len(source["files"]))
         expected_inventory = source_inventory(spec, source, len(raw_manifest))
         require_inventory(store, store.source, expected_inventory, allow_manifest=False)
+        emit("source_inventory_verified", files=len(expected_inventory))
         from .disk_records import DiskRecords
 
         large = not selection_enabled(spec)
