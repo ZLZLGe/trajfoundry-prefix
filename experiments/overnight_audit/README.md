@@ -24,6 +24,12 @@ The mutually exclusive `--long-boundary-sample` option selects records with more
 than six messages by channel, length/session strata, and visible-difference
 boundaries. Selection is deterministic; it is not an error-rate sample.
 
+`explain_leading_whitespace_local.py` rereads the already attributed
+leading-whitespace candidates. It compares complete visible histories after
+removing only leading line breaks, only complete blank lines, or general leading
+ASCII whitespace. The first content line's indentation survives the blank-line
+view. This refines the diagnostic count and does not alter production matching.
+
 The diagnostic views probe text formatting, serialized arguments, leading headers,
 runtime notices, mask label differences, identity boundaries, and adjacent branch
 histories. A transformed prefix is only a review candidate. In particular, removing

@@ -96,6 +96,26 @@ TrajFoundry standardization. The response capture is explicitly
 `OPENAI_CHAT_COMPLETIONS_NORMALIZED`, not raw network bytes; the evidence does
 not identify whether a client, gateway, or capture normalization changed it.
 
+An additional local pass reread all 5,992 leading-whitespace pairs (7,620
+distinct source objects, 2,050,514,679 bytes) and checked every visible message
+after the existing canonicalization. Removing only leading CR/LF characters
+restores the complete prefix for 5,904 pairs; 5,898 of them differ only in the
+last assistant. In 5,811 pairs, each changed position differs by exactly two
+newline characters. The remaining 88 pairs require removing a space or tab on
+the content line; 87 differ only in the last assistant. Removing complete blank
+lines while preserving content-line indentation adds no further pairs.
+
+The 5,904 line-break pairs consist of Sage-A1.5 2,748, Agents-A1 1,250,
+qwen3.8-27b 969, intern-s2 933, and deepseek-v4.1-flash-1017 4. Each category's
+pair count also equals its distinct short-record count. All source hashes and
+complete prefixes were checked, not just the first differing character. Nine
+model/whitespace examples from the 88 space/tab pairs were inspected as a
+separate boundary. These 5,992 candidates are already part of the 105,073-pair
+attribution total and must not be added again. No production rule or source
+object was changed. Full evidence is in `leading-whitespace-three-published/`
+outside Git; the comparison still ignores the fields excluded by the existing
+visible-history policy and does not assert semantic equivalence.
+
 The leading-header sample demonstrates why this bucket is not automatically
 removable. Examples include elapsed runtime timestamps, a saved command
 approval, changed agent-to-agent roles, changed model identity/response
