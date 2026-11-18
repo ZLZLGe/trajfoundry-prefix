@@ -60,13 +60,20 @@ def selection_enabled(spec):
     return value
 
 
+def origin_location(origin):
+    offset = origin.get("source_byte_offset")
+    if offset is not None and (type(offset) is not int or offset < 0):
+        raise ValueError("Invalid raw source byte offset")
+    return origin["source_ref"], -1 if offset is None else offset
+
+
 def merge_origins(origins):
     """Keep each source once; combine its already-recorded quality evidence."""
     merged = {}
     severity = {None: -1, "pass": 0, "quarantined": 1, "excluded": 2}
     for origin in origins:
         item = dict(origin)
-        key = item["source_ref"]
+        key = origin_location(item)
         previous = merged.get(key)
         if previous is None:
             merged[key] = item
@@ -316,7 +323,7 @@ def inspect_partition(lines, spec, owner):
         except Exception as error:
             raise ValueError("Trajectory validation failed: " + ref["path"] + " ("
                              + type(error).__name__ + ")") from None
-        yield {
+        row = {
             "path": ref["path"], "bytes": ref["bytes"], "sha256": ref["sha256"],
             "etag": etag, "trajectory_id": identifier, "status": decision["status"],
             "final_path": decision.get("retained", ref)["path"],
@@ -324,6 +331,14 @@ def inspect_partition(lines, spec, owner):
             "selected": qualifies, "strict": strict,
             "reason_codes": [] if strict else (value.get("normalization_audit") or {}).get("reason_codes", []),
         }
+        if spec.get("archive_rows"):
+            metadata = value["metadata"]["source_metadata"]
+            row["archive"] = {
+                "messages": len(value["messages"]),
+                "success": metadata["original_record_fields"].get("success"),
+                "rewrites": metadata["rewrites"],
+            }
+        yield row
 
 
 def copy_partition(lines, spec, owner, selection=False):

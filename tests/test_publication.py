@@ -54,6 +54,35 @@ def test_lineage_retains_all_sources_and_merges_only_compatible_origins():
         merge_origins([a, {**a, "captured_at": "changed"}])
 
 
+def test_archive_origins_preserve_repeated_bytes_at_distinct_offsets():
+    a = {"source_ref": "archive.jsonl", "source_byte_offset": 0, "sha256": "a" * 64, "reason_codes": []}
+    b = {**a, "source_byte_offset": 57}
+    assert merge_origins([b, a, b]) == [a, b]
+    with pytest.raises(ValueError, match="Conflicting"):
+        merge_origins([b, {**b, "sha256": "b" * 64}])
+
+
+def test_published_archive_preserves_raw_counts_and_recomputes_retained_totals():
+    from trajectory_prefix.archive_publication import published_archive
+
+    short = {"strict": True, "metrics": {"total_rounds": 2, "total_tokens": 90, "total_tool_calls": 1},
+             "archive": {"messages": 4, "rewrites": {"decoded": 2}, "success": True}}
+    long = {"strict": False, "metrics": {"total_rounds": 3, "total_tokens": 120, "total_tool_calls": 1},
+            "archive": {"messages": 6, "rewrites": {"decoded": 4}, "success": False}}
+    before = {"totals": {"input_rows": 3, "physical_rows": 3, "duplicate_rows": 1, "trajectories": 2,
+                         "total_rounds": 5, "total_tokens": 210, "total_tool_calls": 2, "messages": 10,
+                         "accepted": 1, "quarantined": 1, "source_success_true": 1, "source_success_false": 1,
+                         "raw_source_success_true": 2, "raw_source_success_false": 1},
+              "rewrites": {"decoded": 6}, "inventory": [{"key": "archive.jsonl", "bytes": 500}]}
+    after = published_archive(before, [short, long], [long])
+    assert after["totals"] == {**before["totals"], "duplicate_rows": 2, "trajectories": 1, "total_rounds": 3,
+                               "total_tokens": 120, "total_tool_calls": 1, "messages": 6,
+                               "accepted": 0, "source_success_true": 0}
+    assert after["rewrites"] == {"decoded": 4} and after["inventory"] == before["inventory"]
+    with pytest.raises(ValueError, match="archive manifest"):
+        published_archive(before, [short], [short])
+
+
 def test_manifest_preserves_raw_failures_and_excludes_lineage_bytes(spec):
     old = {"parse_failure_count": 67, "input_root": "s3://bucket/raw/",
            "sessionless_partitioning": "normalized-bytes-v1"}

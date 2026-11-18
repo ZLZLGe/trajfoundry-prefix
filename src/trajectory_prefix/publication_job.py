@@ -12,12 +12,14 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .archive_publication import published_archive, verify_archive_sources
 from .comparison import prefix_source_report, require_prefix
 from .publication import (
     PublicationStore,
     encoded,
     merge_lineage_group,
     normalized_manifest,
+    origin_location,
     reason_counts,
     selection_enabled,
     selection_manifest,
@@ -228,6 +230,8 @@ def run(spec_path, output, partitions=512):
             raise ValueError("Source manifest changed")
         source = json.loads(raw_manifest)
         _Manifest.model_validate(source)
+        if bool(spec.get("archive_rows")) != (source.get("sessionless_partitioning") == "archive-record-v1"):
+            raise ValueError("Archive row accounting must match the source manifest")
         write_json(output / "source-manifest.json", source)
         emit("source_manifest_verified", files=len(source["files"]))
         expected_inventory = source_inventory(spec, source, len(raw_manifest))
@@ -291,14 +295,16 @@ def run(spec_path, output, partitions=512):
                        .map(lambda pair: {"path": pair[0], "lineage": pair[1]}))
         if merged.count() != len(kept):
             raise ValueError("Merged lineage count differs from retained count")
-        original_origins = lineage.flatMap(lambda row: ((x["source_ref"], x["sha256"])
+        original_origins = lineage.flatMap(lambda row: ((*origin_location(x), x["sha256"])
                                                        for x in row["origins"])).distinct()
-        merged_origins = merged.flatMap(lambda row: ((x["source_ref"], x["sha256"])
+        merged_origins = merged.flatMap(lambda row: ((*origin_location(x), x["sha256"])
                                                      for x in row["lineage"]["origins"])).distinct()
         if original_origins.subtract(merged_origins).take(1) or merged_origins.subtract(original_origins).take(1):
             raise ValueError("Raw source coverage changed during lineage merge")
         origin_count = original_origins.count()
-        if origin_count + source["counts"]["skipped_inputs"] + source["counts"]["quarantined_records"] != source["counts"]["input_files"]:
+        if spec.get("archive_rows"):
+            verify_archive_sources(source["archive"], original_origins, origin_count, source["counts"]["input_files"])
+        elif origin_count + source["counts"]["skipped_inputs"] + source["counts"]["quarantined_records"] != source["counts"]["input_files"]:
             raise ValueError("Raw source accounting does not reconcile")
         merged_file = output / "lineage.jsonl"
         if not merged_file.exists():
@@ -332,6 +338,8 @@ def run(spec_path, output, partitions=512):
                   "quarantined_trajectories": sum(not row["strict"] for row in kept),
                   "duplicate_trajectories": duplicates,
                   "reason_counts": dict(sorted((raw_failure_reasons + new_reasons).items()))}
+        if spec.get("archive_rows"):
+            source["archive"] = published_archive(source["archive"], rows, kept)
         manifest_path = output / "normalized-manifest.json"
         if manifest_path.exists():
             candidate = json.loads(manifest_path.read_text())

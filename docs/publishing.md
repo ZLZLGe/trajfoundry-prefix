@@ -32,6 +32,8 @@
 - 新 lineage 的代表 ID 与文件内容对应，原始来源集合必须保持一致。标准化 manifest 保持原契约，原始输入和失败统计沿用原始采集口径；输出数量、字节、来源重复计数重新计算。`duplicate_trajectories` 是所有 `origin_count - 1` 的和，不是本次删除文件数。
 - 筛选以根轨迹的 `total_tokens`、`total_tool_calls`、`total_rounds` 为准，三个阈值都包含等于。`total_rounds` 是主 messages 的 assistant 数。质量标签不参与筛选。
 
+TrustCyberData 的完整归档使用 `archive_rows=true` 和该归档版本的校验源码。lineage 以原文件名和行的字节偏移共同标识来源，每个偏移的哈希都须保持一致。归档 manifest 中的输入文件、原始行数、原始成功数和原始失败数沿用采集口径。轨迹数、消息与工具统计、保留轨迹的改写计数按新版本重算。`duplicate_rows` 是已由代表轨迹覆盖的其余输入行数，含本轮前缀覆盖的行。
+
 ## 目标与完成标记
 
 标准化目录为 `<新版本>/dt=日期/`，只含原名轨迹、`lineage.jsonl`、标准化 `manifest.json`。筛选目录为 `<筛选前缀>/<模型>/<版本>/dt=日期/`，模型版本根目录只额外放 9 字段 manifest：`model`、`source`、`min_tokens`、`min_tool_calls`、`min_assistant_steps`、`date_start`、`date_end`、`trajectory_count`、`total_bytes`。不输出分片索引。
