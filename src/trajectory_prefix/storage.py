@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
-import orjson
+from .json_codec import loads
 
 
 @dataclass(frozen=True)
@@ -150,7 +150,7 @@ class Reader:
     def node(self, entry: dict) -> dict:
         # Existing normalized files each contain one complete root object.
         # Multi-record physical shards must first be indexed into individual records.
-        value = orjson.loads(self.read(entry))
+        value = loads(self.read(entry))
         if not isinstance(value, dict):
             raise ValueError("One complete normalized root object per file is required")
         return value

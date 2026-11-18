@@ -21,6 +21,22 @@ from .storage import (
     reference,
 )
 
+from .verification import raw_covers
+
+
+def verify_reuse_partition(lines, policy, storage):
+    reader = Reader(storage)
+    for line in lines:
+        decision = json.loads(line)
+        src = reference(decision["record"])
+        if decision["status"] == "removed":
+            dst = reference(decision["retained"])
+            if not raw_covers(reader.node(src), reader.node(dst), src, dst, policy):
+                raise ValueError("Reused removal has no ordinary prefix witness: " + src["id"])
+        elif decision["status"] != "kept":
+            raise ValueError("Unexpected reused decision status")
+        yield line
+
 
 def partition_key(key):
     if not key[4]:
@@ -164,9 +180,10 @@ def run(
             lambda rows: scan_partition(rows, policy, storage)
         ).saveAsTextFile(str(decisions_path))
     else:
-        sc.textFile(str(reuse_decisions / "decisions"), minPartitions=partitions).saveAsTextFile(
-            str(decisions_path)
-        )
+        reused = sc.textFile(str(reuse_decisions / "decisions"), minPartitions=partitions)
+        reused.mapPartitions(
+            lambda rows: verify_reuse_partition(rows, policy, storage)
+        ).saveAsTextFile(str(decisions_path))
     decisions = sc.textFile(str(decisions_path), minPartitions=partitions)
     counts = dict(
         decisions.mapPartitions(aggregate_counts).reduceByKey(lambda a, b: a + b).collect()

@@ -8,8 +8,7 @@ from collections import Counter, OrderedDict
 from dataclasses import asdict
 from pathlib import Path
 
-import orjson
-
+from .json_codec import loads
 from .pair_review import fields_differ, masked_candidate, prefix, transform
 from .projection import Policy, canonical, digest, project
 from .storage import Reader, file_sha256, reference
@@ -48,7 +47,7 @@ def scope_for(ref, projection, mode):
 
 def make_index(ref, node, policy):
     p = project(node, ref["dataset"], ref["date"], policy)
-    messages = [orjson.loads(t) for t in p.tokens]
+    messages = [loads(t) for t in p.tokens]
     scope = json.loads(p.scope)
     variants, pool = {}, {}
     for mode in MODES:
@@ -173,7 +172,7 @@ class NodeReader:
             self.size += len(data)
             while self.size > 64 * 1024 * 1024 and len(self.cache) > 1:
                 self.size -= len(self.cache.popitem(last=False)[1])
-        return orjson.loads(data)
+        return loads(data)
 
 
 def verify_candidate(row, short, long, policy):
@@ -181,7 +180,7 @@ def verify_candidate(row, short, long, policy):
     ap, bp = project(short, ar["dataset"], ar["date"], policy), project(
         long, br["dataset"], br["date"], policy
     )
-    am, bm = [orjson.loads(t) for t in ap.tokens], [orjson.loads(t) for t in bp.tokens]
+    am, bm = [loads(t) for t in ap.tokens], [loads(t) for t in bp.tokens]
     mode = row["mode"]
     av, bv = variant(am, mode), variant(bm, mode)
     if (
@@ -226,8 +225,8 @@ def verify_mask_partition(rows, policy, storage):
         bp = project(b, row["long"]["dataset"], row["long"]["date"], policy)
         if ap.scope != bp.scope:
             raise RuntimeError("Masked-neighbor identity scope changed")
-        av = variant([orjson.loads(t) for t in ap.tokens], row["mode"])
-        bv = variant([orjson.loads(t) for t in bp.tokens], row["mode"])
+        av = variant([loads(t) for t in ap.tokens], row["mode"])
+        bv = variant([loads(t) for t in bp.tokens], row["mode"])
         yield dict(row, full_sequences_checked=True, diagnostic_only=True,
                    mask_prefix_directions=[prefix(av, bv, masked_candidate),
                                            prefix(bv, av, masked_candidate)],
@@ -266,7 +265,7 @@ def explain_partition(rows, policy, storage):
         a, b = reader.node(row["short"]), reader.node(row["long"])
         ap = project(a, row["short"]["dataset"], row["short"]["date"], policy)
         bp = project(b, row["long"]["dataset"], row["long"]["date"], policy)
-        am, bm = [orjson.loads(t) for t in ap.tokens], [orjson.loads(t) for t in bp.tokens]
+        am, bm = [loads(t) for t in ap.tokens], [loads(t) for t in bp.tokens]
         common = 0
         for x, y in zip(ap.tokens, bp.tokens):
             if x != y:

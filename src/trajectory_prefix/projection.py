@@ -8,11 +8,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
-import orjson
-
-
-def canonical(value: Any) -> bytes:
-    return orjson.dumps(value, option=orjson.OPT_SORT_KEYS)
+from .json_codec import canonical as canonical
 
 
 def digest(value: bytes) -> bytes:
