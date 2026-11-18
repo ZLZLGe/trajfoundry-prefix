@@ -1,6 +1,7 @@
 from copy import deepcopy
 from io import BytesIO
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from botocore.awsrequest import AWSResponse
@@ -342,6 +343,46 @@ class FakeStore:
 
     def get_object(self, **kwargs):
         return {"Body": Body(self.data), "ETag": "etag"}
+
+
+def test_witness_reads_reuse_one_verified_file_per_task_with_a_size_limit(spec, monkeypatch):
+    monkeypatch.setattr("trajectory_prefix.publication._MAX_CACHED_WITNESS_BYTES", 5)
+    client = FakeStore(b"valid")
+    client.get_object = Mock(wraps=client.get_object)
+    store = PublicationStore(spec, "owner", client=client)
+    a = {"path": "a.jsonl", "bytes": 5, "sha256": sha256(b"valid")}
+    b = {**a, "path": "b.jsonl"}
+    for target in (a, dict(a), b, a):
+        assert store.read_witness(target) == b"valid"
+    assert [call.kwargs["Key"] for call in client.get_object.call_args_list] == [
+        store.source + path for path in ("a.jsonl", "b.jsonl", "a.jsonl")
+    ]
+    client.data = b"larger"
+    large = {"path": "large.jsonl", "bytes": 6, "sha256": sha256(b"larger")}
+    for _ in range(2):
+        assert store.read_witness(large) == b"larger"
+    client.data = b"valid"
+    assert store.read_witness(a) == b"valid"
+    other_task = PublicationStore(spec, "owner", client=client)
+    assert other_task.read_witness(a) == b"valid"
+    assert client.get_object.call_count == 7
+
+
+@pytest.mark.parametrize("mismatch", [{"sha256": sha256(b"other")}, {"bytes": 4}])
+def test_witness_read_validates_changed_digest_or_length_and_can_retry(spec, mismatch):
+    client = FakeStore(b"valid")
+    client.get_object = Mock(wraps=client.get_object)
+    store = PublicationStore(spec, "owner", client=client)
+    target = {"path": "a.jsonl", "bytes": 5, "sha256": sha256(b"valid")}
+    assert store.read_witness(target) == b"valid"
+    with pytest.raises(ValueError, match="differs from frozen input"):
+        store.read_witness({**target, **mismatch})
+    client.data = b"wrong"
+    with pytest.raises(ValueError, match="differs from frozen input"):
+        store.read_witness(target)
+    client.data = b"valid"
+    assert store.read_witness(target) == b"valid"
+    assert client.get_object.call_count == 4
 
 
 def test_retry_rechecks_bytes_and_rejects_foreign_owner(spec):

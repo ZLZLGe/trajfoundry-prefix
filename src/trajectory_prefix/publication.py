@@ -117,6 +117,7 @@ def selection_manifest(model, rows, spec):
 _S3_UTC_TIMESTAMP = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z"
 )
+_MAX_CACHED_WITNESS_BYTES = 8 * 1024**2
 
 
 def _parse_s3_timestamp(value):
@@ -137,6 +138,7 @@ class PublicationStore:
     def __init__(self, spec, publication_id, client=None, *, bulk_inventory=False):
         require_prefix(spec)
         self.spec, self.owner = spec, publication_id
+        self._last_witness = None
         self.bucket, self.source = location(spec["source_uri"])
         bucket, self.normalized = location(spec["normalized_uri"])
         if bucket != self.bucket:
@@ -236,6 +238,17 @@ class PublicationStore:
         if expected and (len(data) != expected["bytes"] or sha256(data) != expected["sha256"]):
             raise ValueError("Object content differs from frozen input: " + key)
         return data, response["ETag"]
+
+    def read_witness(self, target):
+        """Reuse the last verified representative's immutable bytes within one inspection task."""
+        identity = (target["path"], target["bytes"], target["sha256"])
+        if self._last_witness is not None and self._last_witness[0] == identity:
+            return self._last_witness[1]
+        self._last_witness = None
+        data, _ = self.read(self.source + target["path"], target)
+        if len(data) <= _MAX_CACHED_WITNESS_BYTES:
+            self._last_witness = (identity, data)
+        return data
 
     def verify(self, key, expected, etag=None):
         response = self.client.get_object(Bucket=self.bucket, Key=key,
@@ -351,8 +364,7 @@ def inspect_partition(lines, spec, owner):
                 raise ValueError("Unexpected model")
             if decision["status"] == "removed":
                 target = decision["retained"]
-                target_raw, _ = store.read(store.source + target["path"], target)
-                if not raw_covers(value, json.loads(target_raw), ref, target, policy):
+                if not raw_covers(value, json.loads(store.read_witness(target)), ref, target, policy):
                     raise ValueError("Removal failed independent prefix verification")
         except Exception as error:
             raise ValueError("Trajectory validation failed: " + ref["path"] + " ("
