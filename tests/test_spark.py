@@ -23,6 +23,16 @@ def spark():
     session.stop()
 
 
+def test_completed_empty_partition_has_zero_decisions(spark, tmp_path):
+    plan = tmp_path / "empty.jsonl"
+    plan.write_bytes(b"")
+    output = tmp_path / "empty-run"
+    report = run(spark, plan, output, partitions=2, check_only=True)
+    assert report["input_count"] == report["kept_count"] == report["removed_count"] == 0
+    assert (output / "decisions/_SUCCESS").is_file()
+    assert (output / "SUCCEEDED").is_file()
+
+
 def test_spark_keeps_original_bytes_and_rechecks_output(spark, tmp_path):
     root = tmp_path / "inputs"
     root.mkdir()

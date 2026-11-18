@@ -208,7 +208,7 @@ def run(
     counts = dict(
         decisions.mapPartitions(aggregate_counts).reduceByKey(lambda a, b: a + b).collect()
     )
-    if counts.get(("all", "input")) != input_count:
+    if counts.get(("all", "input"), 0) != input_count:
         raise RuntimeError("Decision count does not match input count")
     kept_count = counts.get(("all", "kept"), 0)
     report = {
