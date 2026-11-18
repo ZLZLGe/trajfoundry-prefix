@@ -538,3 +538,18 @@ Reading the original DeepInfra v002 lineage also confirms the two climate
 fill-in configurations are distinct source trajectories with separate raw
 origins. The corresponding v003 membership depends on the original job's
 validated publication.
+
+For DeepInfra's October 30 provisional plan, 1,303,705 of the 1,335,697
+retained filenames have the sessionless prefix. The local terminal-cwd scan
+found 390 possible shorter files among 2,278 candidate pairs. After reading
+1,150 original normalized objects (643,498,183 bytes), 19 strict extensions
+involved seven distinct shorter trajectories and 17 longer ones. All 19
+matched on visible overlap, model, harness, user scope and original call
+IDs, except for the shorter record's explicit literal absolute cwd on the
+overlapping terminal Bash call. All seven had a direct extension outside
+that seven-file set. Reading the source lineage and all 23 involved
+masked-raw rows verified the explicit cwd in each short response and the
+corresponding omission in the long request history. All 23 complete
+projected message arrays agreed with their normalized files. These
+observations describe a replay change, without proving the actual process
+cwd or inferring an original shared session ID.

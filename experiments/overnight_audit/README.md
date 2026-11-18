@@ -102,3 +102,17 @@ can additionally check the published set against an earlier audit snapshot.
 hash-checks the same lineage, and joins each retained file reference and
 computed trajectory ID from the completed source-inspection stage to its
 unique lineage row.
+
+For a DeepInfra retained-set index, run `locate_sessionless_cwd.py` locally
+with `--refined`, `--output` and `--workers`. It verifies the complete
+retained inventory and finds possible strict continuations of sessionless
+files whose last tool-call command starts with `cd`. Run
+`verify_sessionless_cwd.py --scan DIR --config CONFIG --output NEW_DIR`
+to read and hash-check both normalized records of each candidate, compare
+the visible messages and report original call-ID agreement. To trace these
+pairs with matching IDs to response and request history, run
+`trace_sessionless_cwd.py` with the Spark normalizer Python environment,
+`--scan`, `--verified`, `--config`, `--output`, the daily `--raw-root`
+and the previous normalized source manifest/lineage receipt via
+`--manifest-receipt`. It verifies the full lineage hash and replays each
+source row locally. The scripts produce no S3 writes.
