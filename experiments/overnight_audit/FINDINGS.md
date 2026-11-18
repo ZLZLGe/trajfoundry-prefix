@@ -602,3 +602,23 @@ Boyue and 27,969 TokenPlan trajectories. No complete origin set equals or
 is contained in another trajectory's origin set. Independent captures can
 still replay the same dialogue, as the 43-origin and 74-origin Boyue Edit
 example with 42 shared origins demonstrates.
+
+### Cross-identity coverage in TokenPlan
+
+All 79,134 previously detected cross-identity pairs had visible history
+coverage when 88,980 published v010 objects were read again (30,739,123,038
+bytes). Of the 79,041 pairs differing only in user ID, 78,977 were strict
+extensions, each with a different short record. Within that strict group,
+78,632 had no session ID on either side. In 75,165 pairs the recorded tool
+IDs agreed across the complete overlapping history. For 46,032 pairs these
+IDs agreed and the longer representative timestamp was positive and no
+more than 60 seconds later. There were 65,018 ordered user-ID combinations,
+and the most frequent one occurred 118 times.
+
+69 pairs from the full population (67 strict and two equal length) shared
+an actual raw origin, involving 91 normalized objects in 14 sessions. The
+entire intersection for each pair was identical in the original v009 and
+published v010 lineages. Each of the 78 distinct shared raw objects was read
+and matched its SHA-256. Overlap in recorded content, including original
+tool IDs, cannot establish that two different source user IDs identify the
+same actor. Representative times are the normalized metadata timestamps.

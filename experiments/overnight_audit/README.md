@@ -151,3 +151,15 @@ lineage hash and compares exact source reference/hash sets across the whole
 channel/date. It reports unique source ownership, shared origins and, where
 present, a direct equal-set or strict-superset witness. It reads no message
 content and makes no semantic merge decisions.
+
+`check_identity_replays.py` takes the completed `--attribution`,
+`--membership`, `--publication`, `--config` and a fresh `--output`. It
+reads each known cross-identity endpoint from the published prefix and
+compares visible words and structured calls through the shorter history,
+recorded tool-call IDs, representative timestamps and sets of raw origins.
+Counts of directed user-ID combinations use a process-local keyed digest;
+the key and the IDs are never written. Use `trace_shared_identity_origins.py`
+with the Spark normalizer Python and the publisher's frozen `app/src` to
+check whether shared origins were present in both the previous and current
+lineages and to read the actual common raw objects. It takes `--comparison`,
+`--publication`, `--membership`, `--config`, `--raw-root` and `--output`.
