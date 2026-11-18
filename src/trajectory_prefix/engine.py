@@ -37,7 +37,7 @@ class PrefixScan:
         self.db.execute("PRAGMA journal_mode=OFF")
         self.db.execute("PRAGMA synchronous=OFF")
         self.db.execute(
-            "CREATE TABLE records (id INTEGER PRIMARY KEY, ref TEXT, projection BLOB, parent INTEGER, reason TEXT)"
+            "CREATE TABLE records (id INTEGER PRIMARY KEY, ref TEXT, projection BLOB, parent INTEGER)"
         )
         self.active: dict[int, list[int]] = {}
         self.previous: tuple | None = None
@@ -89,7 +89,7 @@ class PrefixScan:
             previous = self.load(candidate)
             if covers(p, previous):
                 self.db.execute(
-                    "UPDATE records SET parent=?,reason=? WHERE id=?", (candidate, "equal", row_id)
+                    "UPDATE records SET parent=? WHERE id=?", (candidate, row_id)
                 )
                 return
         for length in sorted(self.active):
@@ -98,8 +98,7 @@ class PrefixScan:
                 previous = self.load(candidate)
                 if covers(previous, p):
                     self.db.execute(
-                        "UPDATE records SET parent=?,reason=? WHERE id=?",
-                        (row_id, "equal" if length == len(p.vector) else "prefix", candidate),
+                        "UPDATE records SET parent=? WHERE id=?", (row_id, candidate)
                     )
                 else:
                     remaining.append(candidate)
@@ -108,8 +107,8 @@ class PrefixScan:
 
     def results(self) -> Iterator[dict]:
         self.db.commit()
-        for row_id, ref, parent, reason in self.db.execute(
-            "SELECT id,ref,parent,reason FROM records ORDER BY id"
+        for row_id, ref, parent in self.db.execute(
+            "SELECT id,ref,parent FROM records ORDER BY id"
         ):
             reference = json.loads(ref)
             if parent is None:
@@ -141,7 +140,7 @@ class PrefixScan:
                 "status": "removed",
                 "record": reference,
                 "retained": json.loads(target),
-                "reason": reason,
+                "reason": "equal" if len(short.tokens) == len(long.tokens) else "prefix",
                 "changes": sorted(set(short.changes) | set(long.changes)),
             }
 

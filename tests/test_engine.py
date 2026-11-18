@@ -39,6 +39,16 @@ def test_prefix_branches_and_transitive_final_witness(tmp_path):
             assert r["retained"]["id"] in {"c", "d"}
 
 
+def test_removal_reason_describes_final_representative(tmp_path):
+    short = node([user(), assistant()])
+    long = node(short["messages"] + [user("next"), assistant("done")])
+    results = deduplicate([record("a", short), record("b", short), record("c", long),
+                           record("d", long)], tmp_path)
+    removed = {r["record"]["id"]: (r["retained"]["id"], r["reason"])
+               for r in results if r["status"] == "removed"}
+    assert removed == {"a": ("c", "prefix"), "b": ("c", "prefix"), "d": ("c", "equal")}
+
+
 def test_extra_information_mode_keeps_tools_required(tmp_path):
     strict = Policy(extra_information="preserve_all")
     a = node(
