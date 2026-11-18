@@ -1,6 +1,6 @@
 # 发布已核验的标准化去重结果
 
-`scripts/submit_publication.py` 是单独的 S3 发布入口。原来的比较命令和 `Reader` 仍只读 S3。发布入口复用已成功的全量去重、独立审计和保留集第二遍检查，要求第二遍新增合并为零。
+`scripts/submit_publication.py` 是 S3 发布入口。发布前核对首次聚合的完整决策、每条移除记录与最终代表的独立审计、保留文件哈希。运行配置中的 `recheck_report` 控制可选的保留集复跑。提供报告路径时，发布器核对保留清单并要求复跑新增合并为零。显式设为 JSON `null` 时，直接使用首次决策，核对独立审计的输入数、保留数、文件哈希核验数和移除关系核验数。发布回执中的 `verification.retained_recheck_performed` 记录实际执行情况。
 
 业务处理必须提交 Spark Cluster。提交器复制当前源码和指定的 TrajFoundry 校验源码到控制目录，并记录文件哈希；Driver 和 Executor 使用这一快照。凭据只有仓库外文件路径，不写入配置值、日志或输出。
 

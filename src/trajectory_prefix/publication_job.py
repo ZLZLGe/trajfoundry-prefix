@@ -59,20 +59,38 @@ def read_decisions(spec, source, disk_path=None):
             and report["policy"] == spec["policy"]):
         raise ValueError("Completed matching decisions are required")
     audit_path = Path(spec["audit_report"])
-    recheck_path = Path(spec["recheck_report"])
     audit = json.loads(audit_path.read_bytes())
-    recheck = json.loads(recheck_path.read_bytes())
     require_prefix(audit)
-    require_prefix(recheck)
     if not ((audit_path.parent / "SUCCEEDED").is_file()
-            and (recheck_path.parent / "SUCCEEDED").is_file()
             and audit.get("passed") is True and Path(audit["source_run"]).resolve() == run.resolve()
-            and audit["policy"] == recheck["policy"] == report["policy"]
-            and recheck["removed_count"] == 0
-            and recheck["input_count"] == recheck["kept_count"] == report["kept_count"]
+            and audit["policy"] == report["policy"]
             and audit["input_plan_sha256"] == report["input_plan_sha256"] == spec["input_plan_sha256"]
             and file_sha256(Path(report["input_plan"])) == spec["input_plan_sha256"]):
-        raise ValueError("Completed independent prefix audit and retained recheck are required")
+        raise ValueError("Completed independent prefix audit must match the source run, policy and input plan")
+    recheck = None
+    if spec["recheck_report"] is None:
+        counts = audit["counts"].get("all", {})
+        retained_metric = "retained_input_hash_verified" if report.get("check_only") else "output_hash_verified"
+        expected_mode = "input_decisions" if report.get("check_only") else "published_files"
+        expected = {
+            "input": report["input_count"],
+            "kept": report["kept_count"],
+            "removed": report["removed_count"],
+            retained_metric: report["kept_count"],
+            "witness_verified": report["removed_count"],
+        }
+        if audit.get("audit_mode") != expected_mode or any(
+            counts.get(key, 0) != value for key, value in expected.items()
+        ):
+            raise ValueError("Independent prefix audit does not cover every input, retained hash and removal witness")
+    else:
+        recheck_path = Path(spec["recheck_report"])
+        recheck = json.loads(recheck_path.read_bytes())
+        require_prefix(recheck)
+        if not ((recheck_path.parent / "SUCCEEDED").is_file() and recheck["policy"] == report["policy"]
+                and recheck["removed_count"] == 0
+                and recheck["input_count"] == recheck["kept_count"] == report["kept_count"]):
+            raise ValueError("Retained recheck must be complete and match the first-pass results")
     files = {entry["path"]: entry for entry in source["files"] if entry["path"] != "lineage.jsonl"}
     from .disk_records import DiskRecords
 
@@ -112,7 +130,8 @@ def read_decisions(spec, source, disk_path=None):
                 raise ValueError("Removal does not name a final retained input")
     if len(decisions) - len(kept) != report["removed_count"]:
         raise ValueError("Removal count differs from audited count")
-    verify_retained_plan(recheck, decisions, kept)
+    if recheck is not None:
+        verify_retained_plan(recheck, decisions, kept)
     emit("decision_evidence_verified", input_count=len(decisions), kept_count=report["kept_count"])
     return decisions, report
 
@@ -430,7 +449,8 @@ def run(spec_path, output, partitions=512):
             "publish_selection": selection_enabled(spec),
             "comparison_mode": spec.get("comparison_mode", "prefix"),
             "retained_models": dict(sorted(Counter(r["model"] for r in kept).items())),
-            "verification": {"source_hashes": len(rows), "normalized_target_hashes": len(copy_rows),
+            "verification": {"retained_recheck_performed": spec["recheck_report"] is not None,
+                             "source_hashes": len(rows), "normalized_target_hashes": len(copy_rows),
                              "selected_target_hashes": len(selected_rows),
                              "derived_fields_checked": len(kept), "lineage_rows": len(kept),
                              "unique_raw_sources": origin_count, "source_manifest_unchanged": True},

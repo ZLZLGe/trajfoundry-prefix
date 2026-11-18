@@ -122,5 +122,32 @@ def test_prefix_publication_binds_audit_and_recheck_to_actual_members(prefix_run
                      "different_date": dict(refs[2], date="2026-08-22")}[change]
             plan.write_bytes(encoded(refs[1]) + encoded(other))
             path.write_bytes(encoded(dict(check, input_plan_sha256=sha256(plan.read_bytes()))))
-    with pytest.raises(ValueError, match="recheck"):
+    with pytest.raises(ValueError, match="audit" if change == "other_run" else "recheck"):
         read_decisions(spec, source)
+
+
+@pytest.mark.parametrize("disk", [False, True])
+def test_explicitly_skipped_recheck_publishes_after_full_audit(prefix_run, disk):
+    root, spec, source, _ = prefix_run
+    report_path = root / "report.json"
+    report = json.loads(report_path.read_bytes())
+    report_path.write_bytes(encoded(dict(report, check_only=True)))
+    spec["recheck_report"] = None
+    audit_path = Path(spec["audit_report"])
+    audit = json.loads(audit_path.read_bytes())
+    audit["audit_mode"] = "input_decisions"
+    audit["counts"] = {"all": {"input": 3, "kept": 2, "removed": 1,
+                               "retained_input_hash_verified": 2, "witness_verified": 1}}
+    audit_path.write_bytes(encoded(audit))
+    decisions, _ = read_decisions(spec, source, root / "index.sqlite" if disk else None)
+    assert len(decisions) == 3
+    if disk:
+        decisions.db.close()
+    for metric in ("input", "kept", "removed", "retained_input_hash_verified", "witness_verified"):
+        incomplete = dict(audit["counts"]["all"])
+        del incomplete[metric]
+        audit_path.write_bytes(encoded(dict(audit, counts={"all": incomplete})))
+        with pytest.raises(ValueError, match="audit"):
+            read_decisions(spec, source)
+    with pytest.raises(KeyError, match="recheck_report"):
+        read_decisions({k: v for k, v in spec.items() if k != "recheck_report"}, source)
