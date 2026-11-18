@@ -124,3 +124,23 @@ dialogue as a contiguous interior block or suffix of another capture with
 the same session and identity. The skipped prefix must include both a user
 and an assistant. Tool results retain their relative binding to the correct
 call when its global ordinal shifts. Header agreement is reported separately.
+
+To quantify the observed Boyue `Edit.replace_all` difference, run
+`index_edit_defaults.py` with `--publication`, `--membership`, `--config`
+and a fresh `--output`. This local process-pool scan uses the verified live
+manifest and checks the bytes of every published object. Run
+`verify_edit_defaults.py` with the same publication and configuration, the
+completed `--index` directory and another fresh output directory. It
+enumerates exact and strict visible prefixes additional to the ordinary
+comparison and re-reads both objects of every match. Each tool definition
+must explicitly declare the optional boolean default. Use the frozen
+refinement package on `PYTHONPATH` for its identity and isolation policy.
+
+With the Spark normalizer's local Python and the publisher's frozen
+`app/src` on `PYTHONPATH`, `trace_boyue_edit_population.py` takes the
+`--verified` directory, `--publication`, `--membership`, `--config`,
+`--raw-root` and an output JSON path. It verifies a raw response and a
+typed replay for every distinct shorter record, recording any missed row.
+`trace_boyue_edit_default.py` instead takes the earlier manual-review
+`--examples` directory and `--case branch-19` and reads the entire union
+of both normalized records' raw lineage.

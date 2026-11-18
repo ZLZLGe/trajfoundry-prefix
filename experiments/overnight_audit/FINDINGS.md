@@ -565,3 +565,29 @@ dialogue, including both a user and an assistant, matched a contiguous
 block after an earlier user and assistant in the longer record. Dropping
 the header-equality requirement did not change the result. This exact
 window test does not assess summaries, partial overlaps or sessionless files.
+
+### Optional Edit default in the Boyue replay
+
+All 290,893 published Boyue files for October 30 (19,922,633,732 bytes)
+were verified locally against the live v002 manifest. The 2,282 records
+with structured Edit calls all explicitly declared an optional boolean
+`replace_all` parameter with default false. Equating only a missing key
+and JSON boolean false on these specific calls yielded 831 strict prefix
+pairs and 243 distinct shorter trajectories in 122 actual sessions. There
+were no equal-length pairs or binding/identity isolation flags among these
+matches. Both endpoints of each pair were re-read. All 831 pairs had the
+same original IDs at every changed call. Every difference occurred only
+in the shorter record's terminal assistant message. The model throughout
+was deepseek-flash. These 243 files account for 0.0835% of this published
+date or 10.65% of the files with structured Edit calls.
+
+For one direct extension outside that shorter set per short, the complete
+lineage hash and 451 distinct original Boyue files were verified. Every
+one of the 243 short model responses omitted the parameter and every
+corresponding later request replay explicitly contained false, with the
+same typed call IDs and all remaining arguments byte-equivalent after
+canonical JSON encoding. The original manual branch-19 example had
+42 shared origins among 43 short-side and 74 long-side origins; its
+one original model response was followed three seconds later by the first
+of 32 request-history occurrences with the explicit default in that
+75-file population. This is a local diagnostic of already-published data.
