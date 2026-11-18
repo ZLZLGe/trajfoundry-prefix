@@ -98,50 +98,61 @@ def read_decisions(spec, source, disk_path=None):
                 and recheck["removed_count"] == 0
                 and recheck["input_count"] == recheck["kept_count"] == report["kept_count"]):
             raise ValueError("Retained recheck must be complete and match the first-pass results")
-    files = {entry["path"]: entry for entry in source["files"] if entry["path"] != "lineage.jsonl"}
+    remaining_files = {
+        entry["path"]: entry for entry in source["files"] if entry["path"] != "lineage.jsonl"
+    }
     from .disk_records import DiskRecords
 
     decisions = DiskRecords(disk_path) if disk_path else {}
     inventory = {}
+    kept_count = 0
     emit("decision_index_started", input_count=report["input_count"])
     for path in sorted((run / "decisions").glob("part-*")):
-        inventory[path.name] = file_sha256(path)
-        with path.open() as stream:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
             for line in stream:
+                digest.update(line)
                 row = json.loads(line)
                 ref = row["record"]
-                if (ref["path"] in decisions or row["status"] not in {"kept", "removed"}
+                # Consuming the manifest entry also detects a repeated decision path.
+                manifest_entry = remaining_files.pop(ref["path"], None)
+                if (row["status"] not in {"kept", "removed"}
                         or ref["dataset"] != spec["dataset"] or ref["date"] != spec["date"]
                         or ref["id"] != "/".join((ref["dataset"], ref["date"], ref["path"]))
                         or ref["uri"] != spec["source_uri"] + ref["path"]
                         or (row["status"] == "kept" and "retained" in row)
-                        or files.get(ref["path"]) != {k: ref[k] for k in ("path", "bytes", "sha256")}):
+                        or manifest_entry != {k: ref[k] for k in ("path", "bytes", "sha256")}):
                     raise ValueError("Decisions differ from the frozen manifest")
+                if row["status"] == "kept":
+                    kept_count += 1
                 if disk_path:
                     decisions.add(ref["path"], row, ref["id"])
                 else:
                     decisions[ref["path"]] = row
+        inventory[path.name] = digest.hexdigest()
         if disk_path:
             decisions.commit()
         if len(inventory) % 256 == 0:
             emit("decision_index_progress", files=len(inventory), rows=len(decisions))
     if sha256(encoded(inventory)) != spec["decision_files_sha256"]:
         raise ValueError("Frozen decisions changed")
-    kept = {k for k, v in decisions.items() if v["status"] == "kept"}
-    if (decisions.keys() != files.keys() or len(decisions) != report["input_count"]
-            or len(kept) != report["kept_count"]):
+    input_count = len(decisions)
+    if remaining_files or input_count != report["input_count"] or kept_count != report["kept_count"]:
         raise ValueError("Decision accounting mismatch")
-    for row in decisions.values():
-        if row["status"] == "removed":
-            retained = row["retained"]
-            if (retained["path"] not in kept
-                    or retained != decisions[retained["path"]]["record"]):
-                raise ValueError("Removal does not name a final retained input")
-    if len(decisions) - len(kept) != report["removed_count"]:
+    del remaining_files
+    if input_count - kept_count != report["removed_count"]:
         raise ValueError("Removal count differs from the first-pass report")
+    removed_rows = decisions.view("removed") if disk_path else (
+        row for row in decisions.values() if row["status"] == "removed")
+    for row in removed_rows:
+        retained = row["retained"]
+        target = decisions.get(retained["path"])
+        if target is None or target["status"] != "kept" or target["record"] != retained:
+            raise ValueError("Removal does not name a final retained input")
     if recheck is not None:
+        kept = {row["record"]["path"] for row in decisions.values() if row["status"] == "kept"}
         verify_retained_plan(recheck, decisions, kept)
-    emit("decision_evidence_verified", input_count=len(decisions), kept_count=report["kept_count"])
+    emit("decision_evidence_verified", input_count=input_count, kept_count=kept_count)
     return decisions, report
 
 

@@ -211,3 +211,27 @@ def test_batch_publication_binds_input_and_final_representative(prefix_run, chan
         spec["decision_files_sha256"] = write_parts(root / "decisions", rows)
     with pytest.raises(error, match=message):
         read_decisions(spec, source)
+
+
+@pytest.mark.parametrize("disk", [False, True])
+@pytest.mark.parametrize(("change", "message"), [
+    ("duplicate", "frozen manifest"),
+    ("missing", "accounting mismatch"),
+    ("target_hash", "final retained input"),
+])
+def test_index_consumes_each_manifest_entry_and_matches_target(prefix_run, disk, change, message):
+    root, spec, source, _ = prefix_run
+    spec.update(audit_report=None, recheck_report=None)
+    part = root / "decisions/part-00000"
+    rows = [json.loads(line) for line in part.read_bytes().splitlines()]
+    if change == "duplicate":
+        rows[2] = rows[1]
+    elif change == "missing":
+        rows.pop()
+        report = json.loads((root / "report.json").read_bytes())
+        (root / "report.json").write_bytes(encoded(dict(report, input_count=2, kept_count=1)))
+    else:
+        rows[0]["retained"]["sha256"] = "d" * 64
+    spec["decision_files_sha256"] = write_parts(root / "decisions", rows)
+    with pytest.raises(ValueError, match=message):
+        read_decisions(spec, source, root / "index.sqlite" if disk else None)
