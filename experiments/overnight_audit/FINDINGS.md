@@ -422,7 +422,41 @@ Private reports, pair references, full cached sources and manual packets are in
 the independent audit run. Source trajectories remain outside Git. Production
 rules, core code, the original DeepInfra job and published data are unchanged.
 
-## Execution constraints and final-channel work
+## DeepInfra decision repeats the task-placeholder boundary
+
+The original candidate phase has now completed: 386,630 pairs were compared,
+374,985 passed and 11,645 failed. A local scan of those completed checks found
+one accepted pair whose changed fields contain `<MASK>`. Its two complete
+normalized objects contain the same climate question with three blanks versus
+one blank, and the same visible answer. The completed decisions remove the
+three-blank record in favor of the one-blank record; the direct production audit
+also accepts that relationship. Final publication membership is not yet proven.
+
+The frozen original comparison was reproduced locally. It accepts with the
+current policy and rejects when only `<MASK>` is disabled in the local probe;
+the explanation identifies that label as necessary. The recorded reasoning
+also describes three blanks on one side and one blank on the other.
+
+Both full message arrays, including reasoning, are exactly identical to the
+previously documented TokenPlan example. The channel metadata, model spelling
+and capture timestamps differ. This is the same task-content counterexample
+appearing in another channel, not a new independent task or a measured rate of
+cross-channel duplication. The collection path cannot be inferred from these
+two normalized pairs alone.
+
+The completed check census also shows no accepted pair whose changed fields
+contain `[HIGH]`, `[MEDIUM]` or `[CRITICAL]`; rejected occurrences number 69,
+27 and 2 respectively, with overlap possible. Other bracketed labels occur in
+accepted changed fields, but presence alone does not establish that a label
+was necessary for acceptance or selected for a removal. No broader correctness
+claim follows from this census.
+
+Local source hashes, completed decision/audit rows, frozen-code checks and
+cross-channel equality evidence are in
+`deepinfra-completed-candidate-boundaries/` outside Git. The reproduction is
+local only. No production rule, job, or published trajectory was changed.
+
+## Remaining final-channel work
 
 The user revised the objective to require local experiments. The completed
 Cluster diagnostic results remain usable. Pending experiment submitters were

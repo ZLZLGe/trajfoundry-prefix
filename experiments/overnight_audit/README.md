@@ -45,6 +45,13 @@ slots. A visible value cannot match a different visible value in these views;
 the difference must involve an existing mask. These are descriptions of where
 user text changed, not permission to merge or a semantic correctness verdict.
 
+`review_completed_mask_literal_local.py` reproduces the observed DeepInfra
+task-placeholder merge using already captured local objects, completed decisions,
+and the original job's frozen comparison code. It checks the result with and
+without treating `<MASK>` as a redaction, without changing production. It also
+checks that the full messages match the earlier TokenPlan example and keeps the
+completed-decision evidence distinct from final publication membership.
+
 The diagnostic views probe text formatting, serialized arguments, leading headers,
 runtime notices, mask label differences, identity boundaries, and adjacent branch
 histories. A transformed prefix is only a review candidate. In particular, removing
