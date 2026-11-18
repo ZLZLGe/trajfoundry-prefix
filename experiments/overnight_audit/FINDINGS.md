@@ -622,3 +622,14 @@ published v010 lineages. Each of the 78 distinct shared raw objects was read
 and matched its SHA-256. Overlap in recorded content, including original
 tool IDs, cannot establish that two different source user IDs identify the
 same actor. Representative times are the normalized metadata timestamps.
+
+### DeepInfra retained candidates before publication
+
+Joining all 386,630 first-pass mask candidates to the 1,335,697 records in
+the preliminary retained list left 9,941 pairs with both endpoints present.
+Reading the 3,379 different original normalized files (663,577,221 bytes)
+and replaying the frozen driver's original-object verifier rejected every
+one of these pairs under the published comparison settings. There were
+zero disagreements with the first pass. Its larger-span diagnostic matched
+62 of those pairs. The cluster's new candidate search on the retained list
+and verification of the published output are still in progress.
