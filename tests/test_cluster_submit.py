@@ -78,3 +78,20 @@ def test_cluster_rejects_unmounted_output_and_non_cluster_master(tmp_path):
         submit.command(c, Path("/share/control"), Path("/share/out"))
     with pytest.raises(ValueError, match="shared"):
         submit.shared_path("/share/../tmp/out", "/share")
+
+
+def test_batch_executor_memory_preserves_defaults_and_probe_sizes(tmp_path):
+    c = config(tmp_path)
+    def sizes(probe=False):
+        _, cmd = submit.command(c, Path("/share/control"), Path("/share/out"), probe=probe)
+        conf = dict(cmd[i + 1].split("=", 1) for i, v in enumerate(cmd) if v == "--conf")
+        return conf["spark.executor.memory"], conf["spark.executor.memoryOverhead"]
+
+    assert sizes() == ("16g", "48g")
+    c.update(executor_heap_gib=16, executor_overhead_gib=44)
+    assert sizes() == ("16g", "44g")
+    assert sizes(probe=True) == ("4g", "4g")
+    for value in (False, 0, -1, "44g"):
+        c["executor_overhead_gib"] = value
+        with pytest.raises(ValueError, match="positive integer GiB"):
+            sizes()

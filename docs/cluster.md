@@ -18,6 +18,7 @@
 | `uid`, `gid`, `arm_python` | Pod 身份和 ARM Python 3.11；环境需有 `orjson`、`boto3` |
 | `s3_endpoint`, `s3_region`, `s3_credentials_file` | S3 只读输入配置；凭据文件由 Pod 用户持有，权限 0400 或 0600 |
 | `extra_listener` | 可选，平台的 Spark Listener 类名 |
+| `executor_heap_gib`, `executor_overhead_gib` | 可选正整数，每个 Executor 的 JVM 堆和堆外预算，单位 GiB。默认 16 和 48。探针使用 4 和 4。正常作业的 Driver 申请 4 核、16 GiB。 |
 
 Executor 临时文件与 SQLite 都使用 Pod 本地磁盘；代码、输入清单和最终结果使用共享目录。输入可由 Executor 直接从 S3 获取，按清单的字节数和 SHA256 校验，并缓存在当前 Pod 的临时目录中。只允许 S3 GetObject，没有 S3 写入操作。
 

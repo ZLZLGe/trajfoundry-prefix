@@ -124,6 +124,10 @@ def command(
         raise ValueError("Cluster submission requires Kubernetes HTTPS")
     if not config["queue"]:
         raise ValueError("An explicit queue is required")
+    heap_gib = 4 if probe else config.get("executor_heap_gib", 16)
+    overhead_gib = 4 if probe else config.get("executor_overhead_gib", 48)
+    if any(type(value) is not int or value < 1 for value in (heap_gib, overhead_gib)):
+        raise ValueError("Executor heap and overhead must be positive integer GiB")
     pod = "trajectory-prefix-" + hashlib.sha256(str(control).encode()).hexdigest()[:16]
     conf = {
         "spark.kubernetes.driver.master": config["master"].removeprefix("k8s://"),
@@ -147,8 +151,8 @@ def command(
         "spark.executor.cores": str(executor_cores),
         "spark.kubernetes.executor.request.cores": str(executor_cores),
         "spark.kubernetes.executor.limit.cores": str(executor_cores),
-        "spark.executor.memory": "4g" if probe else "16g",
-        "spark.executor.memoryOverhead": "4g" if probe else "48g",
+        "spark.executor.memory": f"{heap_gib}g",
+        "spark.executor.memoryOverhead": f"{overhead_gib}g",
         "spark.dynamicAllocation.enabled": "false",
         "spark.speculation": "false",
         "spark.task.maxFailures": "4",
