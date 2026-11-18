@@ -144,3 +144,10 @@ typed replay for every distinct shorter record, recording any missed row.
 `trace_boyue_edit_default.py` instead takes the earlier manual-review
 `--examples` directory and `--case branch-19` and reads the entire union
 of both normalized records' raw lineage.
+
+`survey_lineage_sets.py` takes `--membership`, `--lineage` and a fresh
+`--output`. It verifies the complete local copy against the published
+lineage hash and compares exact source reference/hash sets across the whole
+channel/date. It reports unique source ownership, shared origins and, where
+present, a direct equal-set or strict-superset witness. It reads no message
+content and makes no semantic merge decisions.

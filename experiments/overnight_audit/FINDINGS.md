@@ -591,3 +591,14 @@ canonical JSON encoding. The original manual branch-19 example had
 one original model response was followed three seconds later by the first
 of 32 request-history occurrences with the explicit default in that
 75-file population. This is a local diagnostic of already-published data.
+
+### Shared source records
+
+The verified FreeRouter, Boyue and TokenPlan lineages contain 565, 290,893
+and 1,282,174 trajectories, respectively. Within each channel and date,
+every retained trajectory has at least one source reference and SHA-256
+pair unique to its row. Some share other origins: 30 FreeRouter, 14,382
+Boyue and 27,969 TokenPlan trajectories. No complete origin set equals or
+is contained in another trajectory's origin set. Independent captures can
+still replay the same dialogue, as the 43-origin and 74-origin Boyue Edit
+example with 42 shared origins demonstrates.
