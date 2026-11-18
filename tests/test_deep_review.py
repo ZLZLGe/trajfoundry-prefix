@@ -13,10 +13,9 @@ from trajectory_prefix.deep_review import (
     scan_candidates,
     sort_entries,
     verify_candidate,
-    verify_mask_partition,
 )
 from trajectory_prefix.projection import Policy
-from trajectory_prefix.storage import StorageConfig, reference
+from trajectory_prefix.storage import reference
 
 POLICY = Policy(extra_information="messages_only")
 
@@ -124,30 +123,11 @@ def test_unsafe_tool_bindings_remain_counted_but_never_enter_candidate_modes():
     assert row["variants"] == {}
 
 
-def test_mask_neighbor_below_fifty_percent_is_checked_over_full_sequence(tmp_path):
+def test_placeholder_differences_do_not_trigger_a_near_candidate():
     a, b = sample("a", True), sample("b", True)
-    a["messages"][2]["content"] = 'id: <ID_NUMBER>-d603-4e95'
-    b["messages"][2]["content"] = 'id: d3750755-d603-4e95'
-    tail = [{"role": "user", "content": "more"}, {"role": "assistant", "content": "next"}]
+    a["messages"][2]["content"] = "id: <ID_NUMBER>"
+    b["messages"][2]["content"] = "id: 34567"
+    tail = [{"role": "user", "content": "more"}, {"role": "assistant", "content": "reply"}]
     a["messages"] += tail * 4
     b["messages"] += tail * 5
-    nodes = {"a": a, "b": b}
-    row = next(r for r in candidates(nodes) if r["mode"] == "current")
-    assert row["kind"] == "near_candidate" and row["first_difference_masked"]
-    assert row["common_messages"] == 2
-    for side in ("short", "long"):
-        r = row[side]
-        path = tmp_path / r["path"]
-        path.write_text(json.dumps(nodes[r["path"].split(".")[0]]))
-        r["local_path"] = str(path)
-    checked = list(verify_mask_partition([row], POLICY, StorageConfig()))[0]
-    assert checked["mask_prefix_directions"] == [True, False]
-    assert checked["diagnostic_only"] and not checked["current_rule_covers"]
-    # A later real change must reject the entire-prefix hypothesis even though
-    # the first mismatch is still explained by a masking placeholder.
-    b["messages"][4]["content"] = "different user task"
-    new_ref = ref("b", b)
-    path = tmp_path / "b.json"
-    path.write_text(json.dumps(b))
-    row["long"] = dict(new_ref, local_path=str(path))
-    assert list(verify_mask_partition([row], POLICY, StorageConfig()))[0]["mask_prefix_directions"] == [False, False]
+    assert not candidates({"a": a, "b": b})

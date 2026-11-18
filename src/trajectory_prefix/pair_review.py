@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-import re
 from collections import Counter
 from copy import deepcopy
 from dataclasses import asdict
@@ -15,9 +14,6 @@ from .projection import canonical, covers, project
 from .storage import Reader, StorageConfig, file_sha256, reference
 from .verification import raw_covers
 
-MASK = re.compile(
-    r"<(?:PERSON|LOCATION|ID_NUMBER|EMAIL|PHONE|PHONE_NUMBER|ADDRESS|IP_ADDRESS|ORGANIZATION)>"
-)
 MODES = ("crlf", "trailing_ascii", "argument_json", "without_headers", "without_notifications",
          "without_headers_and_notifications")
 
@@ -81,92 +77,8 @@ def transform(messages, mode):
     return result
 
 
-def _append_range(ranges, low, high):
-    if low > high:
-        return
-    if ranges and low <= ranges[-1][1] + 1:
-        ranges[-1] = (ranges[-1][0], max(high, ranges[-1][1]))
-    else:
-        ranges.append((low, high))
-
-
-def _consume_mask(ranges, value):
-    """Reachable offsets after consuming 1..256 characters other than CR/LF."""
-    result = []
-    for low, high in ranges:
-        start = low
-        bound = min(len(value), high + 256)
-        while start <= high and start < len(value):
-            line_end = bound
-            for newline in ("\r", "\n"):
-                position = value.find(newline, start, bound)
-                if position >= 0:
-                    line_end = min(line_end, position)
-            if start < line_end:
-                last_start = min(high, line_end - 1)
-                _append_range(result, start + 1, min(last_start + 256, line_end))
-            if line_end == bound:
-                break
-            start = line_end + 1
-    return result
-
-
-def _masked_pattern_matches(pattern, value):
-    parts = MASK.split(pattern)
-    masks = len(parts) - 1
-    if not masks:
-        return False
-    literal_length = sum(map(len, parts))
-    if not literal_length + masks <= len(value) <= literal_length + 256 * masks:
-        return False
-    if not value.startswith(parts[0]) or not value.endswith(parts[-1]):
-        return False
-    reachable = [(len(parts[0]), len(parts[0]))]
-    for index, literal in enumerate(parts[1:], 1):
-        consumed = _consume_mask(reachable, value)
-        if not consumed:
-            return False
-        if index == masks:
-            suffix_start = len(value) - len(literal)
-            return any(low <= suffix_start <= high for low, high in consumed)
-        if not literal:
-            reachable = consumed
-            continue
-        reachable = []
-        for low, high in consumed:
-            bound = min(len(value), high + len(literal))
-            position = value.find(literal, low, bound)
-            while position >= 0:
-                end = position + len(literal)
-                _append_range(reachable, end, end)
-                position = value.find(literal, position + 1, bound)
-        if not reachable:
-            return False
-    return False
-
-
-def masked_string_candidate(a, b):
-    # Restricted and explicitly diagnostic: a placeholder is not proof of its
-    # original value. Never pass this relation to the deletion engine.
-    # Track reachable offsets instead of regex backtracking: repeated masks in
-    # long tool output otherwise cause exponential work on a late mismatch.
-    return a == b or _masked_pattern_matches(a, b) or _masked_pattern_matches(b, a)
-
-
-def masked_candidate(a, b):
-    if type(a) is not type(b):
-        return False
-    if isinstance(a, dict):
-        return a.keys() == b.keys() and all(masked_candidate(a[k], b[k]) for k in a)
-    if isinstance(a, list):
-        return len(a) == len(b) and all(masked_candidate(x, y) for x, y in zip(a, b))
-    if isinstance(a, str):
-        return masked_string_candidate(a, b)
-    return canonical(a) == canonical(b)
-
-
-def prefix(a, b, comparator=lambda x, y: canonical(x) == canonical(y)):
-    return bool(a) and len(a) <= len(b) and all(comparator(x, y) for x, y in zip(a, b))
+def prefix(a, b):
+    return bool(a) and len(a) <= len(b) and all(canonical(x) == canonical(y) for x, y in zip(a, b))
 
 
 def fields_differ(a, b, path=""):
@@ -190,8 +102,7 @@ def fields_differ(a, b, path=""):
         common += 1
     return [{"field": path, "lengths": [len(sa), len(sb)], "first_different_char": common,
              "a_excerpt": sa[max(0, common - 80):common + 320],
-             "b_excerpt": sb[max(0, common - 80):common + 320],
-             "redaction_candidate": masked_candidate(a, b)}]
+             "b_excerpt": sb[max(0, common - 80):common + 320]}]
 
 
 def review_pair(a, b, ar, br, policy):
@@ -219,19 +130,9 @@ def review_pair(a, b, ar, br, policy):
         row["first_difference"] = {"roles": [am[common]["role"], bm[common]["role"]],
                                    "details": fields_differ(am[common], bm[common])}
     variants = {}
-    transformed = {}
     for mode in MODES:
         av, bv = transform(am, mode), transform(bm, mode)
-        transformed[mode] = (av, bv)
         variants[mode] = [prefix(av, bv), prefix(bv, av)]
-    variants["redaction_placeholder_candidates"] = [
-        prefix(am, bm, masked_candidate), prefix(bm, am, masked_candidate)
-    ]
-    for mode in ("without_notifications", "without_headers_and_notifications"):
-        av, bv = transformed[mode]
-        variants["redaction_" + mode] = [
-            prefix(av, bv, masked_candidate), prefix(bv, av, masked_candidate)
-        ]
     row["diagnostic_prefix_candidates"] = {k:v for k,v in variants.items() if any(v)}
     if sa == sb:
         ah, bh = [[hashlib.sha256(t).digest() for t in p.tokens] for p in (ap, bp)]
@@ -297,7 +198,7 @@ def run(spark, input_plan, output, *, partitions, policy):
               "input_count":len(refs), "pairs_compared":actual, "counts":dict(counts),
               "policy":asdict(policy), "input_plan_sha256":file_sha256(input_plan),
               "diagnostic_only":True,
-              "limitation":"Transforms are candidate probes, not deletion rules. Mask placeholders and omitted notifications do not prove equivalent original information. All pairs were examined; input trajectories were not changed."}
+              "limitation":"Diagnostic transforms can identify candidates for manual review. Only the ordinary prefix policy authorizes removal."}
     (output / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     (output / "SUCCEEDED").write_text("all bounded input pairs examined\n")
     return report

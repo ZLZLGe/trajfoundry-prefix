@@ -12,7 +12,10 @@ from collections import Counter
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .comparison import require_prefix
+from .projection import Policy
 from .storage import credentials, relative_path
+from .verification import raw_covers
 
 
 def encoded(value):
@@ -106,6 +109,7 @@ class PublicationStore:
     """S3 writes confined to explicit new versions, with run-owned retries."""
 
     def __init__(self, spec, publication_id, client=None):
+        require_prefix(spec)
         self.spec, self.owner = spec, publication_id
         self.bucket, self.source = location(spec["source_uri"])
         bucket, self.normalized = location(spec["normalized_uri"])
@@ -279,12 +283,14 @@ class PublicationStore:
 
 
 def inspect_partition(lines, spec, owner):
+    require_prefix(spec)
     from trajfoundry.canonical import trajectory_id
     from trajfoundry.export import trajectory_filename
     from trajfoundry.output_contract import parse_trajectory_record
     from trajfoundry.quality import is_strict_sample, validate_derived_fields
 
     store = PublicationStore(spec, owner)
+    policy = Policy(**spec["policy"])
     for line in lines:
         decision = json.loads(line)
         ref = decision["record"]
@@ -302,16 +308,11 @@ def inspect_partition(lines, spec, owner):
             qualifies = selected(metrics, spec) if selection_enabled(spec) else False
             if node.model not in spec["models"]:
                 raise ValueError("Unexpected model")
-            if (decision["status"] == "removed"
-                    and spec.get("comparison_mode", "prefix") == "placeholder-relaxed-v1"):
-                from .mask_verification import raw_relaxed_covers
-                from .projection import Policy
-
+            if decision["status"] == "removed":
                 target = decision["retained"]
                 target_raw, _ = store.read(store.source + target["path"], target)
-                if not raw_relaxed_covers(value, json.loads(target_raw), ref, target,
-                                          Policy(**spec["policy"])):
-                    raise ValueError("Relaxed removal failed independent publication audit")
+                if not raw_covers(value, json.loads(target_raw), ref, target, policy):
+                    raise ValueError("Removal failed independent prefix verification")
         except Exception as error:
             raise ValueError("Trajectory validation failed: " + ref["path"] + " ("
                              + type(error).__name__ + ")") from None

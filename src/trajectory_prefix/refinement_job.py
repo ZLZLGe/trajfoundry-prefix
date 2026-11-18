@@ -6,6 +6,7 @@ import zipfile
 from dataclasses import asdict
 from pathlib import Path
 
+from .comparison import require_prefix
 from .deep_review import NodeReader
 from .mask_evidence import explain_partition, summarize_partition
 from .mask_job import POLICY, check_partition, index_partition, nested_counts
@@ -60,6 +61,7 @@ def direct_audit(data, storage):
 
 
 def run(spark, input_plan, baseline_path, output, storage, partitions, manifest_ref):
+    require_prefix({"comparison_mode": VERSION})
     import trajectory_prefix
 
     sc = spark.sparkContext

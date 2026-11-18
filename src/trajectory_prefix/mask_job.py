@@ -11,6 +11,7 @@ from pathlib import Path
 
 import orjson
 
+from .comparison import require_prefix
 from .deep_review import NodeReader
 from .mask_verification import raw_relaxed_covers
 from .masking import (
@@ -150,6 +151,7 @@ def audit_partition(decisions, storage):
 
 
 def run(spark, input_plan, output, storage, partitions, source_manifest):
+    require_prefix({"comparison_mode": VERSION})
     import trajectory_prefix
 
     sc = spark.sparkContext

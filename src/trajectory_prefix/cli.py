@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from .comparison import reusable_prefix_report
 from .projection import Policy
 from .spark import run
 from .storage import StorageConfig
@@ -57,6 +58,8 @@ def main():
     rules = tuple(filter(None, args.rules.split(",")))
     if set(rules) - set(Policy().rules):
         parser.error("Unknown comparison rule")
+    if args.reuse_decisions:
+        reusable_prefix_report(args.reuse_decisions)
     from pyspark.sql import SparkSession
 
     builder = SparkSession.builder.appName("trajectory-prefix")

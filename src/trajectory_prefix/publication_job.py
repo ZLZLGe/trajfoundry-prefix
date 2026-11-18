@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import time
@@ -11,6 +12,7 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .comparison import prefix_source_report, require_prefix
 from .publication import (
     PublicationStore,
     encoded,
@@ -22,36 +24,53 @@ from .publication import (
     sha256,
     write_json,
 )
-from .storage import file_sha256, relative_path
+from .storage import file_sha256, reference, relative_path
 
 
 def emit(event, **values):
     print(json.dumps({"event": event, **values}, ensure_ascii=False), flush=True)
 
 
+def verify_retained_plan(recheck, decisions, remaining):
+    digest = hashlib.sha256()
+    with Path(recheck["input_plan"]).open("rb") as stream:
+        for line in stream:
+            digest.update(line)
+            if not line.strip():
+                continue
+            ref = reference(json.loads(line))
+            path = ref["path"]
+            if path not in remaining:
+                raise ValueError("Duplicate or unexpected file in retained recheck plan")
+            expected = decisions[path]["record"]
+            if any(ref[key] != expected[key] for key in ("id", "bytes", "sha256")):
+                raise ValueError("Retained recheck file differs from the kept decision")
+            remaining.remove(path)
+    if remaining or digest.hexdigest() != recheck["input_plan_sha256"]:
+        raise ValueError("Incomplete or changed retained recheck plan")
+
+
 def read_decisions(spec, source, disk_path=None):
+    report = prefix_source_report(spec)
     run = Path(spec["source_run"])
-    report = json.loads((run / "report.json").read_text())
     if not ((run / "SUCCEEDED").is_file() and (run / "decisions/_SUCCESS").is_file()
             and report["policy"] == spec["policy"]):
         raise ValueError("Completed matching decisions are required")
-    mode = spec.get("comparison_mode", "prefix")
-    if mode == "prefix":
-        audit = json.loads(Path(spec["audit_report"]).read_text())
-        recheck = json.loads(Path(spec["recheck_report"]).read_text())
-        if not (audit.get("passed") and audit["policy"] == report["policy"]
-                and recheck["policy"] == spec["policy"] and recheck["removed_count"] == 0
-                and recheck["input_count"] == report["kept_count"]
-                and audit["input_plan_sha256"] == report["input_plan_sha256"]
-                == spec["input_plan_sha256"]
-                and file_sha256(Path(report["input_plan"])) == spec["input_plan_sha256"]):
-            raise ValueError("Completed independent audit and recheck are required")
-    elif mode == "placeholder-relaxed-v1":
-        from .publication_evidence import validate_mask_report
-
-        validate_mask_report(spec, report)
-    else:
-        raise ValueError("Unsupported publication comparison mode")
+    audit_path = Path(spec["audit_report"])
+    recheck_path = Path(spec["recheck_report"])
+    audit = json.loads(audit_path.read_bytes())
+    recheck = json.loads(recheck_path.read_bytes())
+    require_prefix(audit)
+    require_prefix(recheck)
+    if not ((audit_path.parent / "SUCCEEDED").is_file()
+            and (recheck_path.parent / "SUCCEEDED").is_file()
+            and audit.get("passed") is True and Path(audit["source_run"]).resolve() == run.resolve()
+            and audit["policy"] == recheck["policy"] == report["policy"]
+            and recheck["removed_count"] == 0
+            and recheck["input_count"] == recheck["kept_count"] == report["kept_count"]
+            and audit["input_plan_sha256"] == report["input_plan_sha256"] == spec["input_plan_sha256"]
+            and file_sha256(Path(report["input_plan"])) == spec["input_plan_sha256"]):
+        raise ValueError("Completed independent prefix audit and retained recheck are required")
     files = {entry["path"]: entry for entry in source["files"] if entry["path"] != "lineage.jsonl"}
     from .disk_records import DiskRecords
 
@@ -91,22 +110,24 @@ def read_decisions(spec, source, disk_path=None):
                 raise ValueError("Removal does not name a final retained input")
     if len(decisions) - len(kept) != report["removed_count"]:
         raise ValueError("Removal count differs from audited count")
-    if mode == "placeholder-relaxed-v1":
-        from .publication_evidence import validate_mask_decisions, validate_mask_decisions_streamed
-
-        if disk_path:
-            validate_mask_decisions_streamed(spec, report, decisions)
-        else:
-            validate_mask_decisions(spec, report, decisions)
-    emit("decision_evidence_verified", input_count=len(decisions), kept_count=len(kept))
+    verify_retained_plan(recheck, decisions, kept)
+    emit("decision_evidence_verified", input_count=len(decisions), kept_count=report["kept_count"])
     return decisions, report
 
 
-def stage(sc, output, name, owner, make):
-    receipt = output / "stages" / (name + ".json")
+def stage_receipt(output, name, version=None):
+    original = output / "stages" / (name + ".json")
+    if version and original.is_file() and json.loads(original.read_bytes()).get("version") != version:
+        return original.with_name(f"{name}-{version}.json")
+    return original
+
+
+def stage(sc, output, name, owner, make, *, version=None):
+    receipt = stage_receipt(output, name, version)
     if receipt.exists():
         value = json.loads(receipt.read_text())
-        if value["publication_id"] != owner or not (Path(value["path"]) / "_SUCCESS").is_file():
+        if (value.get("version") != version or value["publication_id"] != owner
+                or not (Path(value["path"]) / "_SUCCESS").is_file()):
             raise ValueError("Invalid publication checkpoint")
         emit("reuse_stage", stage=name, rows=value["rows"])
     else:
@@ -115,6 +136,8 @@ def stage(sc, output, name, owner, make):
         make().map(lambda row: encoded(row).decode().rstrip("\n")).saveAsTextFile(str(target))
         count = sc.textFile(str(target)).filter(bool).count()
         value = {"publication_id": owner, "path": str(target), "rows": count}
+        if version is not None:
+            value["version"] = version
         write_json(receipt, value)
         emit("stage_completed", stage=name, rows=count)
     return sc.textFile(value["path"]).filter(bool).map(json.loads)
@@ -156,13 +179,15 @@ def source_inventory(spec, source, manifest_bytes):
 
 
 def run(spec_path, output, partitions=512):
+    spec = json.loads(Path(spec_path).read_bytes())
+    prefix_source_report(spec)
+
     import trajfoundry
     from pyspark.sql import SparkSession
     from trajfoundry.validation import _LineageRecord, _Manifest
 
     import trajectory_prefix
 
-    spec = json.loads(Path(spec_path).read_text())
     owner = sha256(encoded(spec))
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -219,10 +244,12 @@ def run(spec_path, output, partitions=512):
 
         from .publication import copy_partition, inspect_partition, verify_copies_partition
         inputs = sc.textFile(str(Path(spec["source_run"]) / "decisions"), minPartitions=partitions).filter(bool)
+        inspection_version = "prefix-witness-v1"
         inspected = stage(sc, output, "source-inspection", owner,
-                          lambda: inputs.mapPartitions(lambda rows: inspect_partition(rows, spec, owner)))
+                          lambda: inputs.mapPartitions(lambda rows: inspect_partition(rows, spec, owner)),
+                          version=inspection_version)
         if large:
-            inspected_path = json.loads((output / "stages/source-inspection.json").read_text())["path"]
+            inspected_path = json.loads(stage_receipt(output, "source-inspection", inspection_version).read_bytes())["path"]
             inspected_records = DiskRecords.from_parts(
                 index_root / "inspected.sqlite", inspected_path)
             rows = inspected_records.view()

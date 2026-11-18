@@ -10,6 +10,7 @@ import os
 import shutil
 import ssl
 import subprocess
+import sys
 import time
 from pathlib import Path
 from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener
@@ -277,6 +278,11 @@ def main():
     )
     p.add_argument("--execute", action="store_true")
     a = p.parse_args()
+    sys.path.insert(0, str(REPO / "src"))
+    from trajectory_prefix.comparison import reusable_prefix_report, validate_rules
+
+    if a.rules:
+        validate_rules(filter(None, a.rules.split(",")))
     c = json.loads(a.config.read_text())
     control, output = [shared_path(x, c["shared_root"]) for x in (a.control, a.output)]
     if control == output or control.is_relative_to(output) or output.is_relative_to(control):
@@ -298,6 +304,8 @@ def main():
         p.error("Audit source run has not completed")
     input_plan = shared_path(a.input_plan, c["shared_root"]) if a.input_plan else None
     reuse_decisions = shared_path(a.reuse_decisions, c["shared_root"]) if a.reuse_decisions else None
+    if reuse_decisions:
+        reusable_prefix_report(reuse_decisions)
     if reuse_decisions and not (
         (reuse_decisions / "decisions/_SUCCESS").is_file()
         and (reuse_decisions / "decision-report.json").is_file()

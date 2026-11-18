@@ -8,6 +8,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
+from .comparison import PREFIX_RULES, validate_rules
 from .json_codec import canonical as canonical
 
 
@@ -17,18 +18,13 @@ def digest(value: bytes) -> bytes:
 
 @dataclass(frozen=True)
 class Policy:
-    rules: tuple[str, ...] = (
-        "billing_cch",
-        "assistant_trailing_space",
-        "tool_id_alpha",
-        "empty_assistant",
-        "claude_preamble_cch",
-    )
+    rules: tuple[str, ...] = PREFIX_RULES
     anonymous_min_messages: int = 6
     anonymous_min_chars: int = 1024
     extra_information: str = "tools_only"
 
     def __post_init__(self):
+        validate_rules(self.rules)
         if self.extra_information not in {"messages_only", "tools_only", "preserve_all"}:
             raise ValueError("Unknown extra-information policy")
 

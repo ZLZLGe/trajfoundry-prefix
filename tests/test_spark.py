@@ -155,3 +155,38 @@ def test_header_review_verifies_actual_bodies_without_publishing_trajectories(sp
     assert not (output / "trajectories").exists() and not (output / "manifest.json").exists()
     for row in plan:
         assert hashlib.sha256(Path(row["local_path"]).read_bytes()).hexdigest() == row["sha256"]
+
+
+def test_reused_decisions_require_exact_members_and_a_final_target(spark):
+    from trajectory_prefix.spark import verify_reused_members
+
+    refs = [{"dataset": "test", "date": "day", "path": k, "bytes": 9, "sha256": k * 64}
+            for k in "abc"]
+    sc = spark.sparkContext
+    inputs = sc.parallelize([json.dumps(r) for r in refs], 2)
+    rows = [{"record": refs[0], "retained": refs[1], "status": "removed"},
+            {"record": refs[1], "retained": refs[2], "status": "removed"},
+            {"record": refs[2], "status": "kept"}]
+    with pytest.raises(ValueError, match="final retained input"):
+        verify_reused_members(inputs, sc.parallelize([json.dumps(r) for r in rows]), 2)
+    rows[0] = rows[1]
+    with pytest.raises(ValueError, match="input inventory"):
+        verify_reused_members(inputs, sc.parallelize([json.dumps(r) for r in rows]), 2)
+
+
+def test_old_publication_inspection_is_rerun_before_checkpoint_reuse(spark, tmp_path):
+    from trajectory_prefix.publication_job import stage
+
+    sc = spark.sparkContext
+    (tmp_path / "stages").mkdir()
+    checked = []
+
+    def inspect():
+        checked.append("ran")
+        return sc.parallelize([{"value": len(checked)}], 1)
+
+    assert stage(sc, tmp_path, "source-inspection", "owner", inspect).collect() == [{"value": 1}]
+    for _ in range(2):
+        assert stage(sc, tmp_path, "source-inspection", "owner", inspect,
+                     version="prefix-witness-v1").collect() == [{"value": 2}]
+    assert len(checked) == 2

@@ -1,4 +1,6 @@
-# 完整日期的脱敏增量去重与标准化发布
+# 历史流程：完整日期的脱敏增量去重与发布
+
+此流程已停用。以下内容记录历史版本。当前批次使用普通前缀比较，再按[普通前缀发布流程](publishing.md)核验。
 
 完整输入先通过 `submit_cluster.py --check-only --extra-information messages_only` 生成普通消息前缀基线。`scripts/submit_refinement.py` 接受同一 `--input-plan`、成功的 `--baseline`、固定 SHA256 的 `--source-manifest-ref`，将全部输入的最终决策写到共享目录；该入口只读 S3。
 

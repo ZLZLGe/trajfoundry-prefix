@@ -20,13 +20,9 @@
 
 `source_inventory_receipt` 指向全前缀探查时冻结的清单回执，`source_inventory_sha256` 固定其内容。回执须包含源 URI、manifest 和 input plan 摘要、轨迹数与字节数、`complete_requested_prefix=true`、`non_trajectory_files`（path、bytes）。源目录中未列入 manifest 的旧诊断文件也必须与该清单完全一致；未知文件或大小变化均失败。诊断文件不复制到新版本。
 
-## 发布脱敏宽松评估结果
+## 普通前缀发布
 
-`comparison_mode` 默认为 `prefix`，沿用原审计与复跑回执。发布已完成的脱敏评估时，显式指定 `placeholder-relaxed-v1`，并提供该评估的 `input_plan`、`source_report_sha256`、`audit_files_sha256`、`retained_files_sha256`、`recheck_files_sha256`；后面三个摘要分别固定 `source_run` 下的 `audit/`、`retained-input/`、`recheck-checks/`，算法与决策目录摘要相同。此模式直接验证脱敏评估产物，不要求构造普通前缀模式的 `audit_report` 或 `recheck_report`。
-
-发布前检查完整决策与源 manifest、冻结输入清单逐项对应；验证报告中的规则版本、256 字符边界、字面模板排除集合和消息策略；核对每条独立审计的最终保留引用，要求全部删除都有成功证据；保留输入必须与决定完全一致，复跑候选必须全部不匹配。所有证据目录必须成功完成且文件摘要不变。
-
-Cluster 源文件检查阶段还会重新读取每条脱敏删除关系的两侧原文件，校验 SHA256 并调用独立原始 JSON 比较器。该阶段全部通过后才开始 S3 复制。发布不会重新选择代表或修改脱敏规则；运行回执记录实际 `comparison_mode` 和 `publish_selection`。
+发布只接受普通前缀决策，省略 `comparison_mode` 或显式指定 `prefix` 均可。旧脱敏配置和带 `mask_version` 的源回执会在提交前被拒绝。独立审计须来自本次去重运行，保留集复查清单中的每个轨迹身份、字节数、SHA256 须与本次保留决策一致。发布端从源文件核验每条删除记录与其最终代表的普通前缀关系，再开始复制。
 
 ## 数据与来源
 

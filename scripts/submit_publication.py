@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -25,6 +26,12 @@ def main():
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
+    sys.path.insert(0, str(submit.REPO / "src"))
+    from trajectory_prefix.comparison import prefix_source_report
+
+    spec_bytes = args.publication_config.read_bytes()
+    spec = json.loads(spec_bytes)
+    prefix_source_report(spec)
     config = json.loads(args.config.read_text())
     control, output = [submit.shared_path(p, config["shared_root"])
                        for p in (args.control, args.output)]
@@ -34,7 +41,6 @@ def main():
     validator = args.validation_source.resolve()
     if not (validator / "validation.py").is_file():
         parser.error("--validation-source must contain the pinned TrajFoundry package")
-    spec = json.loads(args.publication_config.read_text())
     for key in ("s3_endpoint", "s3_region", "s3_credentials_file"):
         if spec[key] != config[key]:
             parser.error("Publication S3 settings differ from the cluster settings")
@@ -46,7 +52,7 @@ def main():
     shutil.copytree(validator, control / "app/src/trajfoundry",
                     ignore=shutil.ignore_patterns("__pycache__"))
     frozen_spec = control / "publication.json"
-    frozen_spec.write_bytes(args.publication_config.read_bytes())
+    frozen_spec.write_bytes(spec_bytes)
     source_hashes = {str(p.relative_to(control / "app")): hashlib.sha256(p.read_bytes()).hexdigest()
                      for p in sorted((control / "app").rglob("*")) if p.is_file()}
     (control / "source-hashes.json").write_text(json.dumps(source_hashes, indent=2) + "\n")

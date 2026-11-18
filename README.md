@@ -19,7 +19,7 @@ uv run pytest
 
 需要将已核验结果写入新的 S3 版本时，使用单独的 [发布入口](docs/publishing.md)。它复用冻结的去留决策，逐文件验证目标哈希，可以仅发布标准化目录，也可以同时生成按模型划分的指标筛选目录。
 
-完整日期的脱敏增量比较、最终代表的直接覆盖核验和两种规则的保留集复查，见 [完整日期处理与发布](docs/full-date-refinement.md)。
+当前仅启用普通前缀去重。当日批次使用 `scripts/submit_cluster.py --extra-information messages_only`。消息正文和工具参数中的脱敏标签按字面比较。脱敏评估、二次细化及旧脱敏决策的发布入口已停用。
 
 分组条件、Spark 分区方式和大 `_sub_N` 编号的真实例子见 [分组说明](docs/grouping.md)。
 
@@ -33,4 +33,4 @@ TokenPlan `classification/50000-filter/` 的 165 条完整轨迹使用 `messages
 
 SXF `2026-08-21` 已发布标准化 `v004`（90,589 条）及各模型筛选 `v002`（33,191 条），见 [SXF 发布结果](docs/publication-sxf-v004.md)。
 
-SXF v004 全量增加脱敏占位符宽松匹配后为 90,589 → 90,231 条；358 条删除独立核验通过，全部可由 USER／INTERNAL_NAME_REDACTED 解释，未发布 S3，见 [SXF 脱敏评估](docs/validation-sxf-relaxed-masking.md) 和 [规则说明](docs/relaxed-masking.md)。
+历史实验中，SXF v004 的脱敏宽松匹配将数量从 90,589 条降至 90,231 条。[SXF 历史脱敏评估](docs/validation-sxf-relaxed-masking.md)

@@ -10,6 +10,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .comparison import reusable_prefix_report
 from .engine import PrefixScan, Record
 from .projection import Policy, digest, project
 from .storage import (
@@ -20,7 +21,6 @@ from .storage import (
     output_relative_path,
     reference,
 )
-
 from .verification import raw_covers
 
 
@@ -36,6 +36,26 @@ def verify_reuse_partition(lines, policy, storage):
         elif decision["status"] != "kept":
             raise ValueError("Unexpected reused decision status")
         yield line
+
+
+def verify_reused_members(inputs, decisions, partitions):
+    def keyed(entry):
+        ref = reference(entry)
+        return ref["id"], (ref["bytes"], ref["sha256"])
+
+    def mismatch(row):
+        actual, expected = row[1]
+        return actual != expected
+
+    rows = decisions.map(json.loads)
+    originals = inputs.map(lambda line: keyed(json.loads(line)))
+    records = rows.map(lambda row: keyed(row["record"]))
+    if originals.fullOuterJoin(records, partitions).filter(mismatch).take(1):
+        raise ValueError("Reused decisions differ from the input inventory")
+    kept = rows.filter(lambda row: row["status"] == "kept").map(lambda row: keyed(row["record"]))
+    targets = rows.filter(lambda row: row["status"] == "removed").map(lambda row: keyed(row["retained"]))
+    if targets.leftOuterJoin(kept, partitions).filter(mismatch).take(1):
+        raise ValueError("Reused removal does not point to a final retained input")
 
 
 def partition_key(key):
@@ -137,7 +157,7 @@ def run(
         reuse_decisions = reuse_decisions.resolve()
         if not (reuse_decisions / "decisions/_SUCCESS").is_file():
             raise RuntimeError("Previous decisions have not completed")
-        prior = json.loads((reuse_decisions / "decision-report.json").read_text())
+        prior = reusable_prefix_report(reuse_decisions)
         if prior["policy"] != json.loads(json.dumps(asdict(policy))):
             raise ValueError("Reused decisions require the identical comparison policy")
         if Path(prior["input_plan"]).resolve() != input_plan.resolve():
@@ -207,6 +227,7 @@ def run(
         },
     }
     if prior is not None:
+        verify_reused_members(inputs, decisions, partitions)
         for field in ("input_count", "kept_count", "removed_count", "counts"):
             if report[field] != prior[field]:
                 raise RuntimeError("Copied decisions do not agree with their completed receipt")
