@@ -506,3 +506,21 @@ We checked a 788-character example against both masked-raw Parquet rows.
 The original response includes the text and the call. The later provider
 request contains a single tool-use block at the corresponding position.
 Both complete projected histories match their normalized source files.
+
+### Explicit working directories in recorded tool calls
+
+Human review of 16 pairs in four family-size bands found three whose final
+Bash command was replayed without its initial literal absolute directory.
+Their six raw rows reproduce their normalized histories exactly. In each pair,
+the original response includes the directory, and the later provider request
+omits it on the same tool-call ID.
+
+A local comparison across all 28,888 repeated-family records found 17,185
+strict prefix pairs involving 4,572 distinct shorter records in 1,410 families.
+Every difference occurs in the final visible assistant message of the shorter
+record. All changed calls keep their original IDs. For 3,822 short records,
+the explicit paths equal the most recent observed primary-directory or shell
+reset declaration. Another 657 use descendants, 54 have a different relation
+and 39 have no qualifying declaration. These are evidence of replay variation.
+No inference about the actual process cwd or execution equivalence follows
+solely from a matching call ID or a directory named in a message.

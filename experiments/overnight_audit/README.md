@@ -82,3 +82,9 @@ scope inside each family, and writes per-family counts and references.
 `survey_terminal_tool_text.py` then reads that local cache and measures
 terminal calls for which the raw call array is identical but exactly one
 side carries assistant commentary. Earlier visible messages must all agree.
+
+`select_stratified_branches.py` selects four same-scope branch pairs per
+family-size band from that cache for human reading. `survey_explicit_cwd.py`
+checks every repeated family's full overlaps for literal Bash working-directory
+prefixes. `explain_declared_cwd.py` checks those shorter records against prior
+primary-directory and shell-reset declarations. All three run locally.
