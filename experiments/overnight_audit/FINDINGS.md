@@ -497,3 +497,12 @@ set. This accounts for 1.73 percent of the repeated-family population.
 The largest family's 7,875 witnesses reproduced byte for byte. The other
 families account for 445 distinct shorter records. No comparison between
 different filename families was performed in this census.
+
+Separately, six distinct shorter histories in two families have an exact
+raw terminal tool-call array where one side omits the assistant text.
+Five shorter records exclusively preserve 256 to 822 characters of text.
+One shorter record has no text while the longer copy includes 161 characters.
+We checked a 788-character example against both masked-raw Parquet rows.
+The original response includes the text and the call. The later provider
+request contains a single tool-use block at the corresponding position.
+Both complete projected histories match their normalized source files.

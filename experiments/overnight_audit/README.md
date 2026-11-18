@@ -78,3 +78,7 @@ It saves hashes and short text windows from the corresponding logical rows.
 comparison to all repeated filename families in a completed ordinary recheck
 plan. It verifies every member against its plan hash, uses the full identity
 scope inside each family, and writes per-family counts and references.
+
+`survey_terminal_tool_text.py` then reads that local cache and measures
+terminal calls for which the raw call array is identical but exactly one
+side carries assistant commentary. Earlier visible messages must all agree.
