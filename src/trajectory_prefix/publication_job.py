@@ -357,7 +357,7 @@ def run(spec_path, output, partitions=512):
     output.mkdir(parents=True, exist_ok=True, mode=0o700)
     (output / "stages").mkdir(exist_ok=True)
     run_path = output / "run.json"
-    store = PublicationStore(spec, owner)
+    store = PublicationStore(spec, owner, bulk_inventory=True)
     if run_path.exists():
         state = json.loads(run_path.read_text())
         if state["publication_id"] != owner:

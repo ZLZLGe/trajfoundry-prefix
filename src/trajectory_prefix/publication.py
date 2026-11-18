@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -112,10 +114,27 @@ def selection_manifest(model, rows, spec):
     }
 
 
+_S3_UTC_TIMESTAMP = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z"
+)
+
+
+def _parse_s3_timestamp(value):
+    """Use the ISO parser for UTC object timestamps and the SDK for other wire formats."""
+    if isinstance(value, str) and _S3_UTC_TIMESTAMP.fullmatch(value):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            pass
+    from botocore.utils import parse_timestamp
+
+    return parse_timestamp(value)
+
+
 class PublicationStore:
     """S3 writes confined to explicit new versions, with run-owned retries."""
 
-    def __init__(self, spec, publication_id, client=None):
+    def __init__(self, spec, publication_id, client=None, *, bulk_inventory=False):
         require_prefix(spec)
         self.spec, self.owner = spec, publication_id
         self.bucket, self.source = location(spec["source_uri"])
@@ -142,7 +161,17 @@ class PublicationStore:
         if client is None:
             import boto3
             from botocore.config import Config
-            client = boto3.client(
+
+            create_client = boto3.client
+            if bulk_inventory:
+                from botocore.session import get_session
+
+                # A private Driver session keeps the parser local to this publication.
+                session = get_session()
+                session.get_component("response_parser_factory").set_parser_defaults(
+                    timestamp_parser=_parse_s3_timestamp)
+                create_client = boto3.Session(botocore_session=session).client
+            client = create_client(
                 "s3", endpoint_url=spec["s3_endpoint"], region_name=spec["s3_region"],
                 config=Config(retries={"mode": "standard", "max_attempts": 8},
                               connect_timeout=20, read_timeout=180),

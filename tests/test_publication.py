@@ -3,10 +3,13 @@ from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
+from botocore.awsrequest import AWSResponse
 from botocore.exceptions import ClientError
+from botocore.utils import parse_timestamp
 
 from trajectory_prefix.publication import (
     PublicationStore,
+    _parse_s3_timestamp,
     encoded,
     merge_origins,
     model_component,
@@ -88,6 +91,54 @@ def test_publication_counts_keep_raw_failures_and_exclude_removed_metrics():
     assert counts == {"reason_counts": {"raw_only": 2}, "accepted": 0, "quarantined_trajectories": 0,
                       "duplicate_trajectories": 0}
     assert models == {} and eligible == 0
+
+
+@pytest.mark.parametrize("value", [
+    "2026-11-19T02:01:02Z", "2026-11-19T02:01:02.000Z", "2026-11-19T02:01:02.123456Z",
+    "2026-11-19T02:01:02.123456789Z", "2026-11-19T02:01:02+03:30",
+    "Thu, 19 Nov 2026 02:01:02 GMT", 1234567890, "1234567890",
+])
+def test_publication_timestamp_matches_sdk(value):
+    assert _parse_s3_timestamp(value) == parse_timestamp(value)
+
+
+def test_invalid_s3_utc_timestamp_keeps_sdk_error():
+    value = "2026-02-30T00:00:00Z"
+    with pytest.raises(ValueError) as baseline:
+        parse_timestamp(value)
+    with pytest.raises(type(baseline.value)):
+        _parse_s3_timestamp(value)
+
+
+def test_bulk_inventory_parser_is_local_to_the_driver_client(spec, monkeypatch):
+    timestamp = "2026-11-19T02:01:02.123Z"
+    xml = (f"<ListBucketResult><Contents><Key>a&amp;b</Key><Size>12</Size>"
+           f"<ETag>etag</ETag><LastModified>{timestamp}</LastModified></Contents></ListBucketResult>").encode()
+    raw = SimpleNamespace(stream=lambda: iter([xml]))
+    seen = []
+
+    def timestamp_parser(value):
+        seen.append(value)
+        return _parse_s3_timestamp(value)
+
+    def respond(request, **_):
+        return AWSResponse(request.url, 200, {"content-type": "application/xml"}, raw)
+
+    monkeypatch.setattr("trajectory_prefix.publication._parse_s3_timestamp", timestamp_parser)
+    monkeypatch.setattr("trajectory_prefix.publication.credentials",
+                        lambda _: {"aws_access_key_id": "test", "aws_secret_access_key": "test"})
+    settings = {**spec, "s3_endpoint": "http://localhost:9", "s3_region": "us-east-1",
+                "s3_credentials_file": "unused"}
+    for bulk in (True, False):
+        store = PublicationStore(settings, "owner", bulk_inventory=bulk)
+        try:
+            store.client.meta.events.register("before-send.s3.ListObjectsV2", respond)
+            page = store.client.list_objects_v2(Bucket=store.bucket, Prefix=store.normalized)
+            assert page["Contents"] == [{"Key": "a&b", "Size": 12, "ETag": "etag",
+                                         "LastModified": parse_timestamp(timestamp)}]
+        finally:
+            store.client.close()
+    assert seen == [timestamp]
 
 
 def inventory_client(objects, starts, mode="ordered"):
