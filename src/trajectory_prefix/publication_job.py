@@ -24,7 +24,6 @@ from .publication import (
     merge_lineage_group,
     normalized_manifest,
     origin_location,
-    reason_counts,
     selection_enabled,
     selection_manifest,
     sha256,
@@ -173,6 +172,32 @@ def verify_inspected_decisions(by_path, decisions):
         if row["status"] == "removed":
             verified_removed += 1
     return verified_removed
+
+
+def publication_counts(rows, source_counts, duplicates):
+    input_reasons = Counter()
+    removed_reasons = Counter()
+    retained_models = Counter()
+    accepted = quarantined = selected_count = 0
+    for row in rows:
+        reasons = row["reason_codes"]
+        input_reasons.update(reasons)
+        if row["status"] != "kept":
+            removed_reasons.update(reasons)
+            continue
+        retained_models[row["model"]] += 1
+        accepted += row["strict"]
+        quarantined += not row["strict"]
+        selected_count += row["selected"]
+
+    declared = source_counts["reason_counts"]
+    if any(declared.get(key, 0) < count for key, count in input_reasons.items()):
+        raise ValueError("Source reason accounting cannot be separated")
+    # Source counts include raw failures. Subtract only reasons on removed trajectories.
+    counts = {**source_counts, "accepted": accepted, "quarantined_trajectories": quarantined,
+              "duplicate_trajectories": duplicates,
+              "reason_counts": dict(sorted((Counter(declared) - removed_reasons).items()))}
+    return counts, dict(sorted(retained_models.items())), selected_count
 
 
 def stage_receipt(output, name, version=None):
@@ -377,12 +402,14 @@ def run(spec_path, output, partitions=512):
             rows = inspected_records.view()
         else:
             rows = inspected.collect()
-        if len(rows) != len(decisions) or len({r["trajectory_id"] for r in rows}) != len(rows):
+        input_count = len(rows)
+        if input_count != len(decisions) or len({r["trajectory_id"] for r in rows}) != input_count:
             raise ValueError("Source trajectory IDs or count are not unique")
         by_path = inspected_records if normalized_only else {row["path"]: row for row in rows}
         verified_removed = verify_inspected_decisions(by_path, decisions)
         kept = inspected_records.view("kept") if normalized_only else [row for row in rows if row["status"] == "kept"]
-        if len(kept) != prior_report["kept_count"] or verified_removed != prior_report["removed_count"]:
+        kept_count = len(kept)
+        if kept_count != prior_report["kept_count"] or verified_removed != prior_report["removed_count"]:
             raise ValueError("Inspection counts differ from the first-pass report")
 
         # Freeze lineage bytes before joins; keep the source contract and raw provenance.
@@ -393,17 +420,17 @@ def run(spec_path, output, partitions=512):
             raise ValueError("Frozen lineage changed")
         lineage = sc.textFile(str(lineage_path), minPartitions=partitions).filter(bool).map(json.loads)
         lineage_ids = lineage.map(lambda row: row["trajectory_id"])
-        if lineage.count() != len(rows) or lineage_ids.distinct().count() != len(rows):
+        if lineage.count() != input_count or lineage_ids.distinct().count() != input_count:
             raise ValueError("Source lineage IDs are not unique")
         by_identifier = inspected.keyBy(lambda row: row["trajectory_id"])
         joined = by_identifier.join(lineage.keyBy(lambda row: row["trajectory_id"]), partitions)
-        if joined.count() != len(rows):
+        if joined.count() != input_count:
             raise ValueError("Source lineage does not cover source trajectories")
         merged = stage(sc, output, "merged-lineage", owner,
                        lambda: joined.values().map(lambda pair: (pair[0]["final_path"], pair))
                        .groupByKey(partitions).map(merge_lineage_group)
                        .map(lambda pair: {"path": pair[0], "lineage": pair[1]}))
-        if merged.count() != len(kept):
+        if merged.count() != kept_count:
             raise ValueError("Merged lineage count differs from retained count")
         original_origins = lineage.flatMap(lambda row: ((*origin_location(x), x["sha256"])
                                                        for x in row["origins"])).distinct()
@@ -420,7 +447,7 @@ def run(spec_path, output, partitions=512):
         if not merged_file.exists():
             sorted_lineage = stage(sc, output, "sorted-lineage", owner,
                                    lambda: merged.sortBy(lambda r: r["path"], numPartitions=partitions))
-            if sorted_lineage.count() != len(kept):
+            if sorted_lineage.count() != kept_count:
                 raise ValueError("Sorted lineage count differs from retained count")
             sorted_path = Path(json.loads((output / "stages/sorted-lineage.json").read_text())["path"])
             temp = merged_file.with_suffix(".jsonl." + uuid.uuid4().hex + ".tmp")
@@ -438,16 +465,7 @@ def run(spec_path, output, partitions=512):
         merged_entry = {"path": "lineage.jsonl", "bytes": merged_file.stat().st_size,
                         "sha256": file_sha256(merged_file)}
         duplicates = merged.map(lambda row: row["lineage"]["origin_count"] - 1).sum()
-        old_reasons, new_reasons = reason_counts(rows), reason_counts(kept)
-        declared = source["counts"]["reason_counts"]
-        if any(declared.get(k, 0) < v for k, v in old_reasons.items()):
-            raise ValueError("Source reason accounting cannot be separated")
-        raw_failure_reasons = Counter({k: v - old_reasons[k] for k, v in declared.items()})
-        counts = {**source["counts"],
-                  "accepted": sum(row["strict"] for row in kept),
-                  "quarantined_trajectories": sum(not row["strict"] for row in kept),
-                  "duplicate_trajectories": duplicates,
-                  "reason_counts": dict(sorted((raw_failure_reasons + new_reasons).items()))}
+        counts, retained_models, selected_count = publication_counts(rows, source["counts"], duplicates)
         if spec.get("archive_rows"):
             source["archive"] = published_archive(source["archive"], rows, kept)
         manifest_path = output / "normalized-manifest.json"
@@ -462,7 +480,7 @@ def run(spec_path, output, partitions=512):
         _Manifest.model_validate(candidate)
         if candidate["counts"] != counts or candidate["config_hash"] != owner:
             raise ValueError("Manifest checkpoint no longer matches inspected inputs")
-        emit("publication_preflight_passed", retained=len(kept), selected=sum(r["selected"] for r in kept),
+        emit("publication_preflight_passed", retained=kept_count, selected=selected_count,
              accepted=counts["accepted"], quarantined=counts["quarantined_trajectories"],
              unique_raw_sources=origin_count)
 
@@ -471,7 +489,7 @@ def run(spec_path, output, partitions=512):
         copies = stage(sc, output, "normalized-copy", owner,
                        lambda: kept_input.mapPartitions(lambda it: copy_partition(it, spec, owner)))
         if resumed_normalized:
-            if copies.mapPartitions(lambda it: verify_copies_partition(it, spec, owner)).sum() != len(kept):
+            if copies.mapPartitions(lambda it: verify_copies_partition(it, spec, owner)).sum() != kept_count:
                 raise ValueError("Resumed normalized outputs failed verification")
         if normalized_only:
             copy_path = json.loads((output / "stages/normalized-copy.json").read_text())["path"]
@@ -479,7 +497,7 @@ def run(spec_path, output, partitions=512):
         else:
             copy_rows = copies.collect()
             normalized_count = len(copy_rows)
-            if normalized_count != len(kept) or {r["path"] for r in copy_rows} != {r["path"] for r in kept}:
+            if normalized_count != kept_count or {r["path"] for r in copy_rows} != {r["path"] for r in kept}:
                 raise ValueError("Normalized copy receipts are incomplete")
         store.put_file(store.normalized + "lineage.jsonl", merged_file)
         require_inventory(store, store.normalized, {f["path"]: f["bytes"] for f in candidate["files"]})
@@ -524,26 +542,26 @@ def run(spec_path, output, partitions=512):
         report = {
             "passed": True, "publication_id": owner, "spark_master": sc.master,
             "spark_version": spark.version, "source_uri": spec["source_uri"],
-            "normalized_uri": spec["normalized_uri"], "input_count": len(rows),
-            "kept_count": len(kept), "removed_count": len(rows) - len(kept),
+            "normalized_uri": spec["normalized_uri"], "input_count": input_count,
+            "kept_count": kept_count, "removed_count": input_count - kept_count,
             "selected_count": len(selected_rows), "normalized_bytes": candidate["total_bytes"],
             "selected_bytes": sum(r["bytes"] for r in selected_rows),
             "accepted": counts["accepted"], "quarantined": counts["quarantined_trajectories"],
             "policy": spec["policy"], "models": model_reports,
             "publish_selection": selection_enabled(spec),
             "comparison_mode": spec.get("comparison_mode", "prefix"),
-            "retained_models": dict(sorted(Counter(r["model"] for r in kept).items())),
+            "retained_models": retained_models,
             "verification": {"independent_audit_performed": spec["audit_report"] is not None,
                              "retained_recheck_performed": spec["recheck_report"] is not None,
                              "removal_witnesses_verified": verified_removed,
-                             "source_hashes": len(rows), "normalized_target_hashes": normalized_count,
+                             "source_hashes": input_count, "normalized_target_hashes": normalized_count,
                              "selected_target_hashes": len(selected_rows),
-                             "derived_fields_checked": len(kept), "lineage_rows": len(kept),
+                             "derived_fields_checked": kept_count, "lineage_rows": kept_count,
                              "unique_raw_sources": origin_count, "source_manifest_unchanged": True},
         }
         write_json(output / "report.json", report)
         (output / "SUCCEEDED").write_text("All target bytes, inventories, metrics and lineage checked.\n")
-        emit("publication_completed", kept=len(kept), selected=len(selected_rows), models=len(model_reports))
+        emit("publication_completed", kept=kept_count, selected=len(selected_rows), models=len(model_reports))
         return report
     finally:
         for name in ("decisions", "inspected_records"):

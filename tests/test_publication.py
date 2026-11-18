@@ -16,7 +16,33 @@ from trajectory_prefix.publication import (
     selection_manifest,
     sha256,
 )
-from trajectory_prefix.publication_job import require_inventory, source_inventory
+from trajectory_prefix.publication_job import (
+    publication_counts,
+    require_inventory,
+    source_inventory,
+)
+
+
+def test_publication_counts_keep_raw_failures_and_exclude_removed_metrics():
+    rows = [
+        {"status": "kept", "strict": True, "selected": True, "model": "b", "reason_codes": []},
+        {"status": "kept", "strict": False, "selected": False, "model": "a", "reason_codes": ["shared"]},
+        {"status": "removed", "strict": False, "selected": True, "model": "c",
+         "reason_codes": ["shared", "removed"]},
+    ]
+    source = {"reason_counts": {"shared": 4, "removed": 1, "raw_only": 2, "zero": 0},
+              "input_files": 10, "duplicate_trajectories": 1}
+    counts, models, eligible = publication_counts(iter(rows), source, 3)
+    assert counts == {"reason_counts": {"raw_only": 2, "shared": 3}, "input_files": 10,
+                      "duplicate_trajectories": 3, "accepted": 1, "quarantined_trajectories": 1}
+    assert models == {"a": 1, "b": 1} and eligible == 1
+    with pytest.raises(ValueError, match="Source reason accounting"):
+        publication_counts(iter(rows), {**source, "reason_counts": {"shared": 1, "removed": 1}}, 3)
+
+    counts, models, eligible = publication_counts(iter(()), {"reason_counts": {"raw_only": 2}}, 0)
+    assert counts == {"reason_counts": {"raw_only": 2}, "accepted": 0, "quarantined_trajectories": 0,
+                      "duplicate_trajectories": 0}
+    assert models == {} and eligible == 0
 
 
 def inventory_client(objects, starts, mode="ordered"):
