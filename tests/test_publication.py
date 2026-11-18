@@ -3,6 +3,7 @@ from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
+from botocore.exceptions import ClientError
 
 from trajectory_prefix.publication import (
     PublicationStore,
@@ -16,6 +17,70 @@ from trajectory_prefix.publication import (
     sha256,
 )
 from trajectory_prefix.publication_job import require_inventory, source_inventory
+
+
+def inventory_client(objects, starts, mode="ordered"):
+    def paginate(*, Bucket, Prefix, StartAfter=None):
+        starts.append(StartAfter)
+        names = sorted(objects)
+        if StartAfter is not None:
+            if mode in {"NotImplemented", "AccessDenied"}:
+                raise ClientError({"Error": {"Code": mode}}, "ListObjectsV2")
+            if mode != "ignore_after":
+                names = [name for name in names if Prefix + name > StartAfter]
+        if mode == "unordered":
+            names.reverse()
+        for pos in range(0, len(names), 2):
+            yield {"Contents": [{"Key": Prefix + name, "Size": objects[name]} for name in names[pos:pos + 2]]}
+    return SimpleNamespace(get_paginator=lambda operation: SimpleNamespace(paginate=paginate))
+
+
+@pytest.mark.parametrize("change", [
+    "intact", "optional_manifest_absent", "extra_before", "extra_between", "extra_after",
+    "missing_boundary", "missing_last", "same_total", "size",
+])
+def test_partition_inventory_checks_the_entire_keyspace(spec, monkeypatch, change):
+    monkeypatch.setattr("trajectory_prefix.publication_job._INVENTORY_KEYS_PER_RANGE", 2)
+    expected = {"a": 0, "b": 1, "c": 2, "d": 3, "lineage.jsonl": 4, "轨迹": 5}
+    actual = {**expected, "manifest.json": 7}
+    if change == "optional_manifest_absent":
+        del actual["manifest.json"]
+    elif change in {"extra_before", "extra_between", "extra_after"}:
+        actual[{"extra_before": "!", "extra_between": "b/nested", "extra_after": "轨迹2"}[change]] = 0
+    elif change == "missing_boundary":
+        del actual["b"]
+    elif change == "missing_last":
+        del actual["轨迹"]
+    elif change == "same_total":
+        actual["b/new"] = actual.pop("b")
+    elif change == "size":
+        actual["c"] += 1
+    starts = []
+    store = PublicationStore(spec, "test", client=inventory_client(actual, starts))
+    if change in {"intact", "optional_manifest_absent"}:
+        require_inventory(store, store.normalized, expected)
+        assert set(starts) == {None, store.normalized + "b", store.normalized + "d"}
+    else:
+        with pytest.raises(ValueError, match="File collection or byte counts"):
+            require_inventory(store, store.normalized, expected)
+
+
+@pytest.mark.parametrize("mode", ["ordered", "NotImplemented", "ignore_after", "unordered", "AccessDenied"])
+def test_source_inventory_requires_manifest_and_supports_legacy_listings(spec, monkeypatch, mode):
+    monkeypatch.setattr("trajectory_prefix.publication_job._INVENTORY_KEYS_PER_RANGE", 2)
+    expected = {"a": 2, "b": 3, "lineage.jsonl": 4, "manifest.json": 0}
+    actual = dict(expected)
+    starts = []
+    store = PublicationStore(spec, "test", client=inventory_client(actual, starts, mode))
+    if mode == "AccessDenied":
+        with pytest.raises(ClientError, match="AccessDenied"):
+            require_inventory(store, store.source, expected, allow_manifest=False)
+        return
+    require_inventory(store, store.source, expected, allow_manifest=False)
+    assert starts.count(None) == (1 if mode == "ordered" else 2)
+    del actual["manifest.json"]
+    with pytest.raises(ValueError, match="File collection or byte counts"):
+        require_inventory(store, store.source, expected, allow_manifest=False)
 
 
 @pytest.fixture

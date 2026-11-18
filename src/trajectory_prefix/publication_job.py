@@ -9,8 +9,12 @@ import time
 import uuid
 import zipfile
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from itertools import pairwise
 from pathlib import Path
+
+from botocore.exceptions import ClientError
 
 from .archive_publication import published_archive, verify_archive_sources
 from .comparison import prefix_source_report, require_prefix
@@ -199,12 +203,65 @@ def stage(sc, output, name, owner, make, *, version=None):
     return sc.textFile(value["path"]).filter(bool).map(json.loads)
 
 
+_INVENTORY_KEYS_PER_RANGE = 40_000
+
+
+class _UnorderedListing(Exception):
+    """The endpoint did not honor ordered ListObjectsV2 ranges."""
+
+
 def require_inventory(store, prefix, expected, *, allow_manifest=True):
+    mismatch = "File collection or byte counts differ: " + prefix
+    workers = min(8, (len(expected) + _INVENTORY_KEYS_PER_RANGE - 1) // _INVENTORY_KEYS_PER_RANGE)
+    if workers > 1 and hasattr(store, "inventory_items"):
+        started = time.monotonic()
+        names = sorted(expected)
+        boundaries = [names[len(names) * i // workers - 1] for i in range(1, workers)]
+        del names
+
+        def check_range(bounds):
+            after, through = bounds
+            previous = after
+            matched = 0
+            for name, size in store.inventory_items(prefix, after=after):
+                if previous is not None and name <= previous:
+                    raise _UnorderedListing
+                if through is not None and name > through:
+                    break
+                if not (allow_manifest and name == "manifest.json"):
+                    if name not in expected or expected[name] != size:
+                        raise ValueError(mismatch)
+                    matched += 1
+                if name == through:
+                    break
+                previous = name
+            return matched
+
+        # Disjoint (after, through] ranges also cover keys before the first
+        # expected object and beyond the last one, including unexpected files.
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                total = sum(pool.map(check_range, pairwise([None, *boundaries, None])))
+        except _UnorderedListing:
+            pass
+        except ClientError as error:
+            if error.response.get("Error", {}).get("Code") not in {
+                "InvalidArgument", "InvalidRequest", "NotImplemented", "NotSupported"
+            }:
+                raise
+        else:
+            if total == len(expected):
+                emit("inventory_ranges_verified", objects=total, ranges=workers,
+                     elapsed_seconds=round(time.monotonic() - started, 2))
+                return
+
+    # Reconcile a short or unordered range listing with the original full
+    # inventory. Small partitions also use this path.
     actual = store.inventory(prefix)
     if allow_manifest:
         actual.pop("manifest.json", None)
     if actual != expected:
-        raise ValueError("File collection or byte counts differ: " + prefix)
+        raise ValueError(mismatch)
 
 
 def source_inventory(spec, source, manifest_bytes):

@@ -173,11 +173,16 @@ class PublicationStore:
         if not allowed:
             raise ValueError("S3 operation outside publication scope: " + operation)
 
+    def inventory_items(self, prefix, *, after=None):
+        params = {"Bucket": self.bucket, "Prefix": prefix}
+        if after is not None:
+            params["StartAfter"] = prefix + after
+        for page in self.client.get_paginator("list_objects_v2").paginate(**params):
+            for entry in page.get("Contents", []):
+                yield entry["Key"][len(prefix):], entry["Size"]
+
     def inventory(self, prefix):
-        return {x["Key"][len(prefix):]: x["Size"]
-                for page in self.client.get_paginator("list_objects_v2").paginate(
-                    Bucket=self.bucket, Prefix=prefix)
-                for x in page.get("Contents", [])}
+        return dict(self.inventory_items(prefix))
 
     def head(self, key):
         try:
