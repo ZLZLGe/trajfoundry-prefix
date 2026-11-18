@@ -63,3 +63,13 @@ Candidate counts are per view and can overlap. Branch neighbors are a systematic
 candidate sample, not an exhaustive classification of every branch. Exact input
 coverage, per-mode verified counts, sample selection and limitations are recorded
 in the resulting report.
+
+For a completed ordinary recheck, `review_largest_family_local.py` finds the
+largest filename family and verifies every member against the retained plan.
+Run `explain_family_progress_requests.py` and
+`explain_family_replacement_characters.py` against its local cache. The
+latter writes the changed positions for every verified full visible prefix.
+`trace_family_raw_replacements.py` takes selected `--pair SHORT LONG`
+arguments and a matching masked-raw Parquet directory. Run it locally with
+the Spark normalizer Python environment for its source reader and PyArrow.
+It saves hashes and short text windows from the corresponding logical rows.

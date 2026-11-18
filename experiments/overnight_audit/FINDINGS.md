@@ -468,3 +468,20 @@ The original DeepInfra production run continues unchanged. Once its validated
 publication completes, the existing delivery process will fill the Feishu
 comparison, and the retained-set diagnostics will run locally. The final audit
 must still include these results and resolve the outstanding candidate counts.
+
+### Largest DeepInfra family in the retained plan
+
+All 2,752 normalized objects in the largest filename family belong to one
+actual session and have distinct maximal visible histories. Of those, 2,481
+end in an explicit request for a 3–5 word progress description. For 1,939
+of them another record contains the exact pre-request visible history,
+continues differently, and ends with a user message without that template.
+
+Matching a short run of Unicode replacement characters against a single
+concrete non-ASCII character, with every other visible field checked across
+the complete overlap, identifies 7,875 strict prefix pairs involving 54
+distinct shorter records in this selected family. Four masked-raw rows for
+two pairs contain the differing text in the provider requests themselves.
+Their reconstructed message arrays agree exactly with all four normalized
+objects. The observation identifies a possible missed-merge mechanism, but
+does not recover lost characters or estimate a channel-wide removal count.
