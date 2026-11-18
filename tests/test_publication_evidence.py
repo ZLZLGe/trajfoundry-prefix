@@ -8,7 +8,7 @@ from trajectory_prefix.masking import MAX_SPAN, TEMPLATES, VERSION
 from trajectory_prefix.projection import Policy
 from trajectory_prefix.publication import encoded, sha256
 from trajectory_prefix.publication_evidence import part_files_sha256
-from trajectory_prefix.publication_job import read_decisions
+from trajectory_prefix.publication_job import read_decisions, verify_inspected_decisions
 from trajectory_prefix.storage import reference
 
 
@@ -151,3 +151,63 @@ def test_explicitly_skipped_recheck_publishes_after_full_audit(prefix_run, disk)
             read_decisions(spec, source)
     with pytest.raises(KeyError, match="recheck_report"):
         read_decisions({k: v for k, v in spec.items() if k != "recheck_report"}, source)
+
+
+@pytest.mark.parametrize("empty", [False, True])
+@pytest.mark.parametrize("disk", [False, True])
+def test_batch_publication_without_debug_jobs(prefix_run, empty, disk):
+    root, spec, source, _ = prefix_run
+    spec.update(audit_report=None, recheck_report=None)
+    if empty:
+        source["files"] = []
+        spec["decision_files_sha256"] = write_parts(root / "decisions", [])
+        Path(spec["input_plan"]).write_bytes(b"")
+        spec["input_plan_sha256"] = sha256(b"")
+        report = json.loads((root / "report.json").read_bytes())
+        report.update(input_count=0, kept_count=0, removed_count=0, input_plan_sha256=spec["input_plan_sha256"])
+        (root / "report.json").write_bytes(encoded(report))
+    decisions, report = read_decisions(spec, source, root / "index.sqlite" if disk else None)
+    inspected = {
+        path: {**row["record"], "status": row["status"],
+               "final_path": row.get("retained", row["record"])["path"]}
+        for path, row in decisions.items()
+    }
+    assert verify_inspected_decisions(inspected, decisions) == report["removed_count"] == (0 if empty else 1)
+    if not empty:
+        removed = next(path for path, row in inspected.items() if row["status"] == "removed")
+        for change in ({"status": "kept"}, {"final_path": removed}, {"sha256": "d" * 64}):
+            with pytest.raises(ValueError, match="Inspected row"):
+                verify_inspected_decisions({**inspected, removed: {**inspected[removed], **change}}, decisions)
+        del inspected[removed]
+        with pytest.raises(ValueError, match="cover all decisions"):
+            verify_inspected_decisions(inspected, decisions)
+    if disk:
+        decisions.db.close()
+
+
+@pytest.mark.parametrize("change, message", [
+    ("input_plan", "input plan"), ("input_digest", "input plan"), ("decisions", "Frozen decisions"),
+    ("wrong_root", "final retained input"), ("wrong_id", "frozen manifest"), ("missing_audit_key", "audit_report"),
+])
+def test_batch_publication_binds_input_and_final_representative(prefix_run, change, message):
+    root, spec, source, refs = prefix_run
+    spec.update(audit_report=None, recheck_report=None)
+    error = ValueError
+    if change == "input_plan":
+        Path(spec["input_plan"]).write_bytes(b"")
+    elif change == "input_digest":
+        spec["input_plan_sha256"] = sha256(b"other")
+    elif change == "decisions":
+        spec["decision_files_sha256"] = sha256(b"other")
+    elif change == "missing_audit_key":
+        del spec["audit_report"]
+        error = KeyError
+    else:
+        rows = [json.loads(line) for line in (root / "decisions/part-00000").read_text().splitlines()]
+        if change == "wrong_root":
+            rows[0]["retained"] = refs[0]
+        else:
+            rows[0]["record"]["id"] = refs[2]["id"]
+        spec["decision_files_sha256"] = write_parts(root / "decisions", rows)
+    with pytest.raises(error, match=message):
+        read_decisions(spec, source)

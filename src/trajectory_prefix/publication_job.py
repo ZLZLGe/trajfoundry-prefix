@@ -1,4 +1,4 @@
-"""Cluster-only publication of an independently audited prefix result."""
+"""Publish prefix decisions on the cluster and verify each removal against its final representative."""
 
 from __future__ import annotations
 
@@ -52,22 +52,15 @@ def verify_retained_plan(recheck, decisions, remaining):
         raise ValueError("Incomplete or changed retained recheck plan")
 
 
-def read_decisions(spec, source, disk_path=None):
-    report = prefix_source_report(spec)
-    run = Path(spec["source_run"])
-    if not ((run / "SUCCEEDED").is_file() and (run / "decisions/_SUCCESS").is_file()
-            and report["policy"] == spec["policy"]):
-        raise ValueError("Completed matching decisions are required")
+def verify_audit_report(spec, run, report):
     audit_path = Path(spec["audit_report"])
     audit = json.loads(audit_path.read_bytes())
     require_prefix(audit)
     if not ((audit_path.parent / "SUCCEEDED").is_file()
             and audit.get("passed") is True and Path(audit["source_run"]).resolve() == run.resolve()
             and audit["policy"] == report["policy"]
-            and audit["input_plan_sha256"] == report["input_plan_sha256"] == spec["input_plan_sha256"]
-            and file_sha256(Path(report["input_plan"])) == spec["input_plan_sha256"]):
+            and audit["input_plan_sha256"] == report["input_plan_sha256"]):
         raise ValueError("Completed independent prefix audit must match the source run, policy and input plan")
-    recheck = None
     if spec["recheck_report"] is None:
         counts = audit["counts"].get("all", {})
         retained_metric = "retained_input_hash_verified" if report.get("check_only") else "output_hash_verified"
@@ -83,7 +76,21 @@ def read_decisions(spec, source, disk_path=None):
             counts.get(key, 0) != value for key, value in expected.items()
         ):
             raise ValueError("Independent prefix audit does not cover every input, retained hash and removal witness")
-    else:
+
+
+def read_decisions(spec, source, disk_path=None):
+    report = prefix_source_report(spec)
+    run = Path(spec["source_run"])
+    if not ((run / "SUCCEEDED").is_file() and (run / "decisions/_SUCCESS").is_file()
+            and report["policy"] == spec["policy"]):
+        raise ValueError("Completed matching decisions are required")
+    if (report["input_plan_sha256"] != spec["input_plan_sha256"]
+            or file_sha256(Path(report["input_plan"])) != spec["input_plan_sha256"]):
+        raise ValueError("Source run differs from the frozen input plan")
+    if spec["audit_report"] is not None:
+        verify_audit_report(spec, run, report)
+    recheck = None
+    if spec["recheck_report"] is not None:
         recheck_path = Path(spec["recheck_report"])
         recheck = json.loads(recheck_path.read_bytes())
         require_prefix(recheck)
@@ -105,7 +112,9 @@ def read_decisions(spec, source, disk_path=None):
                 ref = row["record"]
                 if (ref["path"] in decisions or row["status"] not in {"kept", "removed"}
                         or ref["dataset"] != spec["dataset"] or ref["date"] != spec["date"]
+                        or ref["id"] != "/".join((ref["dataset"], ref["date"], ref["path"]))
                         or ref["uri"] != spec["source_uri"] + ref["path"]
+                        or (row["status"] == "kept" and "retained" in row)
                         or files.get(ref["path"]) != {k: ref[k] for k in ("path", "bytes", "sha256")}):
                     raise ValueError("Decisions differ from the frozen manifest")
                 if disk_path:
@@ -129,11 +138,26 @@ def read_decisions(spec, source, disk_path=None):
                     or retained != decisions[retained["path"]]["record"]):
                 raise ValueError("Removal does not name a final retained input")
     if len(decisions) - len(kept) != report["removed_count"]:
-        raise ValueError("Removal count differs from audited count")
+        raise ValueError("Removal count differs from the first-pass report")
     if recheck is not None:
         verify_retained_plan(recheck, decisions, kept)
     emit("decision_evidence_verified", input_count=len(decisions), kept_count=report["kept_count"])
     return decisions, report
+
+
+def verify_inspected_decisions(by_path, decisions):
+    if by_path.keys() != decisions.keys():
+        raise ValueError("Inspection does not cover all decisions")
+    verified_removed = 0
+    for path, row in by_path.items():
+        decision = decisions[path]
+        if (row["status"] != decision["status"]
+                or row["final_path"] != decision.get("retained", decision["record"])["path"]
+                or any(row[k] != decision["record"][k] for k in ("sha256", "bytes"))):
+            raise ValueError("Inspected row differs from frozen decision")
+        if row["status"] == "removed":
+            verified_removed += 1
+    return verified_removed
 
 
 def stage_receipt(output, name, version=None):
@@ -288,17 +312,10 @@ def run(spec_path, output, partitions=512):
         if len(rows) != len(decisions) or len({r["trajectory_id"] for r in rows}) != len(rows):
             raise ValueError("Source trajectory IDs or count are not unique")
         by_path = inspected_records if large else {row["path"]: row for row in rows}
-        if by_path.keys() != decisions.keys():
-            raise ValueError("Inspection does not cover all decisions")
-        for path, row in by_path.items():
-            decision = decisions[path]
-            if (row["status"] != decision["status"]
-                    or row["final_path"] != decision.get("retained", decision["record"])["path"]
-                    or any(row[k] != decision["record"][k] for k in ("sha256", "bytes"))):
-                raise ValueError("Inspected row differs from frozen decision")
+        verified_removed = verify_inspected_decisions(by_path, decisions)
         kept = inspected_records.view("kept") if large else [row for row in rows if row["status"] == "kept"]
-        if len(kept) != prior_report["kept_count"]:
-            raise ValueError("Retained count differs from audited count")
+        if len(kept) != prior_report["kept_count"] or verified_removed != prior_report["removed_count"]:
+            raise ValueError("Inspection counts differ from the first-pass report")
 
         # Freeze lineage bytes before joins; keep the source contract and raw provenance.
         lineage_path = output / "source-lineage.jsonl"
@@ -449,7 +466,9 @@ def run(spec_path, output, partitions=512):
             "publish_selection": selection_enabled(spec),
             "comparison_mode": spec.get("comparison_mode", "prefix"),
             "retained_models": dict(sorted(Counter(r["model"] for r in kept).items())),
-            "verification": {"retained_recheck_performed": spec["recheck_report"] is not None,
+            "verification": {"independent_audit_performed": spec["audit_report"] is not None,
+                             "retained_recheck_performed": spec["recheck_report"] is not None,
+                             "removal_witnesses_verified": verified_removed,
                              "source_hashes": len(rows), "normalized_target_hashes": len(copy_rows),
                              "selected_target_hashes": len(selected_rows),
                              "derived_fields_checked": len(kept), "lineage_rows": len(kept),
