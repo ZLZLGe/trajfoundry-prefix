@@ -47,6 +47,10 @@ class DiskRecords(Mapping):
     def view(self, status=None):
         return DiskView(self, status)
 
+    def retained_identifiers(self):
+        """Stream retained paths and trajectory IDs in Spark's sorted lineage order."""
+        return self.db.execute("SELECT path, identifier FROM entries WHERE status='kept' ORDER BY path")
+
     def commit(self):
         self.db.commit()
 

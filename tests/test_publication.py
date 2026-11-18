@@ -20,7 +20,52 @@ from trajectory_prefix.publication_job import (
     publication_counts,
     require_inventory,
     source_inventory,
+    write_sorted_lineage,
 )
+
+
+def test_sorted_lineage_preserves_validated_bytes_and_empty_partitions(tmp_path):
+    parts = tmp_path / "sorted"
+    parts.mkdir()
+    target = tmp_path / "lineage.jsonl"
+    first = {"trajectory_id": "1" * 64, "representative": "a", "origin_count": 1, "origins": [
+        {"source_ref": "source/a", "sha256": "a" * 64},
+    ]}
+    second = {"trajectory_id": "2" * 64, "representative": "乙", "origin_count": 1, "origins": [
+        {"source_ref": '中文/"example"\n', "sha256": "b" * 64, "source_byte_offset": 2**80, "disposition": None},
+    ]}
+    (parts / "part-00002").write_bytes(encoded({"path": "乙.jsonl", "lineage": second}))
+    (parts / "part-00001").touch()
+    (parts / "part-00000").write_bytes(encoded({"path": "a.jsonl", "lineage": first}))
+    validated = []
+    identities = [("a.jsonl", first["trajectory_id"]), ("乙.jsonl", second["trajectory_id"])]
+    write_sorted_lineage(parts, target, iter(identities), validated.append)
+    assert validated == [first, second]
+    assert target.read_bytes() == encoded(first) + encoded(second)
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    (empty / "part-00000").touch()
+    write_sorted_lineage(empty, target, iter(()), validated.append)
+    assert target.read_bytes() == b""
+
+
+@pytest.mark.parametrize("actual", [
+    [("a", "1")],
+    [("a", "1"), ("b", "2"), ("x", "3")],
+    [("a", "1"), ("a", "1")],
+    [("b", "2"), ("a", "1")],
+    [("a", "2"), ("b", "1")],
+])
+def test_sorted_lineage_rejects_missing_duplicate_reordered_or_wrong_roots(tmp_path, actual):
+    target = tmp_path / "lineage.jsonl"
+    target.write_bytes(b"previous output\n")
+    (tmp_path / "part-00000").write_bytes(b"".join(
+        encoded({"path": path, "lineage": {"trajectory_id": identifier}}) for path, identifier in actual
+    ))
+    with pytest.raises(ValueError, match="Sorted lineage"):
+        write_sorted_lineage(tmp_path, target, [("a", "1"), ("b", "2")], lambda row: None)
+    assert target.read_bytes() == b"previous output\n" and not list(tmp_path.glob("*.tmp"))
 
 
 def test_publication_counts_keep_raw_failures_and_exclude_removed_metrics():

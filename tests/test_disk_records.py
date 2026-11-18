@@ -57,3 +57,14 @@ def test_empty_copy_receipts(tmp_path):
         assert records.verify_retained_copies(tmp_path) == 0
     finally:
         records.db.close()
+
+
+def test_retained_identity_cursor_matches_python_path_order(tmp_path):
+    rows = [("乙", "3", "kept"), ("a", "1", "kept"), ("b", "4", "removed"), ("é", "2", "kept")]
+    records = DiskRecords(tmp_path / "index.sqlite")
+    try:
+        for path, identifier, status in rows:
+            records.add(path, {"status": status}, identifier)
+        assert list(records.retained_identifiers()) == sorted((p, i) for p, i, s in rows if s == "kept")
+    finally:
+        records.db.close()

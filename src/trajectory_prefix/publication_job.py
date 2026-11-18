@@ -18,6 +18,7 @@ from botocore.exceptions import ClientError
 
 from .archive_publication import published_archive, verify_archive_sources
 from .comparison import prefix_source_report, require_prefix
+from .json_codec import canonical
 from .publication import (
     PublicationStore,
     encoded,
@@ -205,6 +206,29 @@ def stage_receipt(output, name, version=None):
     if version and original.is_file() and json.loads(original.read_bytes()).get("version") != version:
         return original.with_name(f"{name}-{version}.json")
     return original
+
+
+def write_sorted_lineage(directory, destination, retained_identifiers, validate):
+    """Match both sorted sequences while writing validated lineage as canonical JSONL."""
+    identities = iter(retained_identifiers)
+    temporary = destination.with_suffix(".jsonl." + uuid.uuid4().hex + ".tmp")
+    output = temporary.open("xb")
+    try:
+        with output:
+            for part in sorted(directory.glob("part-*")):
+                with part.open("rb") as records:
+                    for line in records:
+                        row = json.loads(line)
+                        lineage = row["lineage"]
+                        validate(lineage)
+                        if next(identities, None) != (row["path"], lineage["trajectory_id"]):
+                            raise ValueError("Sorted lineage differs from the retained paths or trajectory IDs")
+                        output.write(canonical(lineage) + b"\n")
+            if next(identities, None) is not None:
+                raise ValueError("Sorted lineage is missing a retained trajectory")
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def stage(sc, output, name, owner, make, *, version=None):
@@ -450,18 +474,11 @@ def run(spec_path, output, partitions=512):
             if sorted_lineage.count() != kept_count:
                 raise ValueError("Sorted lineage count differs from retained count")
             sorted_path = Path(json.loads((output / "stages/sorted-lineage.json").read_text())["path"])
-            temp = merged_file.with_suffix(".jsonl." + uuid.uuid4().hex + ".tmp")
-            with temp.open("wb") as stream:
-                for part in sorted(sorted_path.glob("part-*")):
-                    with part.open() as records:
-                        for line in records:
-                            row = json.loads(line)
-                            value = row["lineage"]
-                            _LineageRecord.model_validate(value)
-                            if value["trajectory_id"] != by_path[row["path"]]["trajectory_id"]:
-                                raise ValueError("Merged lineage representative ID changed")
-                            stream.write(encoded(value))
-            temp.replace(merged_file)
+            if normalized_only:
+                retained_ids = inspected_records.retained_identifiers()
+            else:
+                retained_ids = ((r["path"], r["trajectory_id"]) for r in sorted(kept, key=lambda r: r["path"]))
+            write_sorted_lineage(sorted_path, merged_file, retained_ids, _LineageRecord.model_validate)
         merged_entry = {"path": "lineage.jsonl", "bytes": merged_file.stat().st_size,
                         "sha256": file_sha256(merged_file)}
         duplicates = merged.map(lambda row: row["lineage"]["origin_count"] - 1).sum()
