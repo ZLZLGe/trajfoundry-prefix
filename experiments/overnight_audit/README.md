@@ -36,6 +36,15 @@ It requires the snapshot and all selected source objects to exist locally,
 checks their hashes, and loads the unchanged original job's comparison code.
 Candidate counts and local pair checks are never reported as final removals.
 
+`explain_masked_user_changes_local.py` reads every completed masking removal
+whose user messages differ. It verifies complete source hashes and isolates
+the exact `[Asia/<LOCATION>]` versus `[Asia/Shanghai]` spelling difference.
+`subdivide_masked_user_changes_local.py` then reads only the remaining cached
+pairs, with no network access, and locates timezone, sender-ID and bot-identity
+slots. A visible value cannot match a different visible value in these views;
+the difference must involve an existing mask. These are descriptions of where
+user text changed, not permission to merge or a semantic correctness verdict.
+
 The diagnostic views probe text formatting, serialized arguments, leading headers,
 runtime notices, mask label differences, identity boundaries, and adjacent branch
 histories. A transformed prefix is only a review candidate. In particular, removing

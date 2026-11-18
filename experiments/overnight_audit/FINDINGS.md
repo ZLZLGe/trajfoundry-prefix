@@ -379,7 +379,50 @@ reproduction script uses only those existing local files. No trajectory command
 was executed, no new Cluster job was submitted, and the original run and core
 code remain unchanged. Final DeepInfra retained-set analysis is still pending.
 
-## Execution and remaining work
+## Complete user-message masking subdivision
+
+Among the three completed channels' 11,324 extra masking removals, 7,613 pairs
+have changed user messages. All 7,613 were read locally, covering 9,862 distinct
+complete source objects and 5,833,910,693 bytes with length and SHA256 checks.
+The initial narrow comparison finds 6,742 pairs whose user changes consist only
+of the exact `[Asia/<LOCATION>]` versus `[Asia/Shanghai]` spelling.
+
+The remaining 871 pairs were reread entirely from the local cache. A broader
+location-only diagnostic distinguishes timezone names in `Asia/...`, sender-ID
+slots, and bot-identity slots, requiring the full surrounding user text to agree.
+It rejects two different concrete values and rejects unrelated body differences.
+The resulting mutually exclusive pair counts across all 7,613 are:
+
+| User-text difference location | TokenPlan | FreeRouter | Boyue |
+| --- | ---: | ---: | ---: |
+| Timezone slots only | 6,864 | 1 | 0 |
+| Sender-ID slots only | 165 | 0 | 0 |
+| Bot-identity slots only | 142 | 0 | 0 |
+| Includes other user text | 403 | 0 | 38 |
+
+These categories concern user messages only: assistant or tool fields may also
+differ. They do not reconstruct hidden values or establish the semantic
+correctness of the removals. The 441 other-text pairs include the previously
+documented task-placeholder counterexample and strong suspected conflicts;
+441 is not a count of errors. Of those 441, 305 have exactly corresponding
+original tool-call ID prefixes, providing additional replay evidence without
+proving hidden inputs equal.
+
+Eight additional, nonoverlapping boundary pairs were inspected through complete
+visible-field differences and surrounding context. Examples include a model
+route name masked as a place, the Chinese hair-description word masked as a
+person, a memory-instruction term masked as an organization, and test strings
+masked as IP addresses. One long coding history includes a real user question
+with a masked place name, reinforcing that not all user changes are metadata.
+No new confirmed task conflict was established by these eight samples. They
+are deliberately selected examples, not a population error-rate sample.
+
+Private reports, pair references, full cached sources and manual packets are in
+`masked-user-changes-three-published/` and `masked-user-change-locations/` under
+the independent audit run. Source trajectories remain outside Git. Production
+rules, core code, the original DeepInfra job and published data are unchanged.
+
+## Execution constraints and final-channel work
 
 The user revised the objective to require local experiments. The completed
 Cluster diagnostic results remain usable. Pending experiment submitters were
