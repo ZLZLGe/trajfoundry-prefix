@@ -524,3 +524,17 @@ reset declaration. Another 657 use descendants, 54 have a different relation
 and 39 have no qualifying declaration. These are evidence of replay variation.
 No inference about the actual process cwd or execution equivalence follows
 solely from a matching call ID or a directory named in a message.
+
+### Reconciliation with published S3 membership
+
+The three published channels' live manifest inventories agree with every
+retained path, byte length, and SHA-256 in their rechecked plans, totaling
+1,573,632 trajectories. Complete remote lineage reads confirm one row per
+retained trajectory. Original source references may occur in more than one
+row, so summed origin counts and distinct-source counts are reported
+separately. For each of the three reviewed TokenPlan masking cases, both raw
+origins occur together on the verified retained trajectory's unique row.
+Reading the original DeepInfra v002 lineage also confirms the two climate
+fill-in configurations are distinct source trajectories with separate raw
+origins. The corresponding v003 membership depends on the original job's
+validated publication.

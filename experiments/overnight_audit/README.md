@@ -88,3 +88,17 @@ family-size band from that cache for human reading. `survey_explicit_cwd.py`
 checks every repeated family's full overlaps for literal Bash working-directory
 prefixes. `explain_declared_cwd.py` checks those shorter records against prior
 primary-directory and shell-reset declarations. All three run locally.
+
+`verify_published_membership.py` reads the live source and destination
+manifests, compares the complete published file inventory against the
+retained plan, and checks the full remote lineage digest and row accounting.
+For selected case pairs, give `--anchors` a JSON list containing `name`,
+`removed` and `retained` normalized references, and `origins` with
+`source_ref` and `sha256`. Run those checks with the local Spark normalizer
+Python interpreter and the successful publisher's frozen `app/src` on
+`PYTHONPATH` to use its trajectory ID implementation. `--expected-plan-sha`
+can additionally check the published set against an earlier audit snapshot.
+`verify_published_identifiers.py` takes that receipt via `--membership`,
+hash-checks the same lineage, and joins each retained file reference and
+computed trajectory ID from the completed source-inspection stage to its
+unique lineage row.
