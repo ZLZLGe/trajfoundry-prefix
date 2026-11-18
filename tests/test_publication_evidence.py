@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from trajectory_prefix.disk_records import DiskRecords
 from trajectory_prefix.masking import MAX_SPAN, TEMPLATES, VERSION
 from trajectory_prefix.projection import Policy
 from trajectory_prefix.publication import encoded, sha256
@@ -182,6 +183,32 @@ def test_batch_publication_without_debug_jobs(prefix_run, empty, disk):
         with pytest.raises(ValueError, match="cover all decisions"):
             verify_inspected_decisions(inspected, decisions)
     if disk:
+        decisions.db.close()
+
+
+def test_disk_inspection_covers_exactly_the_frozen_decision_paths(prefix_run):
+    root, spec, source, _ = prefix_run
+    spec.update(audit_report=None, recheck_report=None)
+    decisions, report = read_decisions(spec, source, root / "decisions.sqlite")
+    inspected = DiskRecords(root / "inspection.sqlite")
+    try:
+        for path in reversed(list(decisions)):
+            decision = decisions[path]
+            row = {**decision["record"], "status": decision["status"],
+                   "final_path": decision.get("retained", decision["record"])["path"]}
+            inspected.add(path, row, row["id"])
+        assert verify_inspected_decisions(inspected, decisions) == report["removed_count"]
+        changed = dict(decisions)
+        changed["unexpected.jsonl"] = changed.pop(next(iter(changed)))
+        with pytest.raises(ValueError, match="cover all decisions"):
+            verify_inspected_decisions(inspected, changed)
+        changed = dict(decisions)
+        path = next(iter(changed))
+        changed[path] = {**changed[path], "record": {**changed[path]["record"], "bytes": 0}}
+        with pytest.raises(ValueError, match="Inspected row"):
+            verify_inspected_decisions(inspected, changed)
+    finally:
+        inspected.db.close()
         decisions.db.close()
 
 

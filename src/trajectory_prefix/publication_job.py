@@ -18,6 +18,7 @@ from botocore.exceptions import ClientError
 
 from .archive_publication import published_archive, verify_archive_sources
 from .comparison import prefix_source_report, require_prefix
+from .disk_records import DiskRecords
 from .json_codec import canonical
 from .publication import (
     PublicationStore,
@@ -105,8 +106,6 @@ def read_decisions(spec, source, disk_path=None):
     remaining_files = {
         entry["path"]: entry for entry in source["files"] if entry["path"] != "lineage.jsonl"
     }
-    from .disk_records import DiskRecords
-
     decisions = DiskRecords(disk_path) if disk_path else {}
     inventory = {}
     kept_count = 0
@@ -161,11 +160,14 @@ def read_decisions(spec, source, disk_path=None):
 
 
 def verify_inspected_decisions(by_path, decisions):
-    if by_path.keys() != decisions.keys():
+    if len(by_path) != len(decisions):
         raise ValueError("Inspection does not cover all decisions")
     verified_removed = 0
-    for path, row in by_path.items():
-        decision = decisions[path]
+    items = by_path.scan_items() if isinstance(by_path, DiskRecords) else by_path.items()
+    for path, row in items:
+        decision = decisions.get(path)
+        if decision is None:
+            raise ValueError("Inspection does not cover all decisions")
         if (row["status"] != decision["status"]
                 or row["final_path"] != decision.get("retained", decision["record"])["path"]
                 or any(row[k] != decision["record"][k] for k in ("sha256", "bytes"))):
@@ -401,8 +403,6 @@ def run(spec_path, output, partitions=512):
         require_inventory(store, store.source, expected_inventory, allow_manifest=False)
         emit("source_inventory_verified", files=len(expected_inventory))
         del expected_inventory
-        from .disk_records import DiskRecords
-
         normalized_only = not selection_enabled(spec)
         decisions, prior_report = read_decisions(
             spec, source, index_root / "decisions.sqlite" if normalized_only else None)
@@ -424,10 +424,12 @@ def run(spec_path, output, partitions=512):
             inspected_records = DiskRecords.from_parts(
                 index_root / "inspected.sqlite", inspected_path)
             rows = inspected_records.view()
+            distinct_ids = inspected_records.distinct_identifier_count()
         else:
             rows = inspected.collect()
+            distinct_ids = len({r["trajectory_id"] for r in rows})
         input_count = len(rows)
-        if input_count != len(decisions) or len({r["trajectory_id"] for r in rows}) != input_count:
+        if input_count != len(decisions) or distinct_ids != input_count:
             raise ValueError("Source trajectory IDs or count are not unique")
         by_path = inspected_records if normalized_only else {row["path"]: row for row in rows}
         verified_removed = verify_inspected_decisions(by_path, decisions)

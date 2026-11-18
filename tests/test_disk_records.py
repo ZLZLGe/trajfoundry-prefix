@@ -59,6 +59,19 @@ def test_empty_copy_receipts(tmp_path):
         records.db.close()
 
 
+def test_identifier_count_matches_the_set_of_inspected_ids(tmp_path):
+    records = DiskRecords(tmp_path / "inspection.sqlite")
+    try:
+        identifiers = []
+        for i, identifier in enumerate(["甲", None, "1", None]):
+            assert records.distinct_identifier_count() == len(set(identifiers))
+            records.add(str(i), {"trajectory_id": identifier}, identifier)
+            identifiers.append(identifier)
+        assert records.distinct_identifier_count() == len(set(identifiers))
+    finally:
+        records.db.close()
+
+
 def test_retained_identity_cursor_matches_python_path_order(tmp_path):
     rows = [("乙", "3", "kept"), ("a", "1", "kept"), ("b", "4", "removed"), ("é", "2", "kept")]
     records = DiskRecords(tmp_path / "index.sqlite")

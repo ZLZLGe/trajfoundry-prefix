@@ -44,6 +44,15 @@ class DiskRecords(Mapping):
     def values(self):
         return (json.loads(row[0]) for row in self.db.execute("SELECT payload FROM entries"))
 
+    def scan_items(self):
+        """Read each stored key and payload together in one table scan."""
+        for path, payload in self.db.execute("SELECT path, payload FROM entries"):
+            yield path, json.loads(payload)
+
+    def distinct_identifier_count(self):
+        # A distinct subquery counts a missing identifier once, like a Python set.
+        return self.db.execute("SELECT count(*) FROM (SELECT DISTINCT identifier FROM entries)").fetchone()[0]
+
     def view(self, status=None):
         return DiskView(self, status)
 
