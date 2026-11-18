@@ -6,6 +6,13 @@ from collections.abc import Mapping
 from pathlib import Path
 
 
+def _part_records(part):
+    with part.open("rb") as stream:
+        for line in stream:
+            if line.strip():
+                yield json.loads(line)
+
+
 class DiskRecords(Mapping):
     def __init__(self, path):
         self.db = sqlite3.connect(path)
@@ -43,15 +50,34 @@ class DiskRecords(Mapping):
     def commit(self):
         self.db.commit()
 
+    def verify_retained_copies(self, directory):
+        """Check each copy against its retained path and trajectory ID exactly once."""
+        # SQLite assigns rowids as inspection records are appended. One byte per
+        # row tracks coverage without indexing the full copy payload a second time.
+        last_rowid = self.db.execute("SELECT coalesce(max(rowid), 0) FROM entries").fetchone()[0]
+        seen = bytearray(last_rowid + 1)
+        lookup = self.db.cursor()
+        copied = 0
+        for part in sorted(Path(directory).glob("part-*")):
+            for row in _part_records(part):
+                match = lookup.execute(
+                    "SELECT rowid FROM entries WHERE path=? AND identifier=? AND status='kept'",
+                    (row["path"], row["trajectory_id"]),
+                ).fetchone()
+                if match is None or seen[match[0]]:
+                    raise ValueError("Normalized copy receipt does not uniquely match a retained trajectory")
+                seen[match[0]] = 1
+                copied += 1
+        if copied != len(self.view("kept")):
+            raise ValueError("Normalized copy receipts are incomplete")
+        return copied
+
     @classmethod
     def from_parts(cls, path, directory):
         result = cls(path)
         for part in sorted(Path(directory).glob("part-*")):
-            with part.open() as stream:
-                for line in stream:
-                    if line.strip():
-                        row = json.loads(line)
-                        result.add(row["path"], row, row["trajectory_id"])
+            for row in _part_records(part):
+                result.add(row["path"], row, row["trajectory_id"])
             result.commit()
         return result
 

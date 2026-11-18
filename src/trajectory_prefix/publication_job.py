@@ -286,14 +286,14 @@ def run(spec_path, output, partitions=512):
         del expected_inventory
         from .disk_records import DiskRecords
 
-        large = not selection_enabled(spec)
+        normalized_only = not selection_enabled(spec)
         decisions, prior_report = read_decisions(
-            spec, source, index_root / "decisions.sqlite" if large else None)
+            spec, source, index_root / "decisions.sqlite" if normalized_only else None)
         # The frozen decision index now covers every source file. Only the lineage entry
         # is needed from the multi-million-row source file list after this point.
         lineage_entry = next(x for x in source.pop("files") if x["path"] == "lineage.jsonl")
         emit("source_verified", input_count=len(decisions), kept_count=prior_report["kept_count"],
-             normalized_uri=spec["normalized_uri"], publish_selection=selection_enabled(spec),
+             normalized_uri=spec["normalized_uri"], publish_selection=not normalized_only,
              selection_version=spec.get("selection_version"))
 
         from .publication import copy_partition, inspect_partition, verify_copies_partition
@@ -302,7 +302,7 @@ def run(spec_path, output, partitions=512):
         inspected = stage(sc, output, "source-inspection", owner,
                           lambda: inputs.mapPartitions(lambda rows: inspect_partition(rows, spec, owner)),
                           version=inspection_version)
-        if large:
+        if normalized_only:
             inspected_path = json.loads(stage_receipt(output, "source-inspection", inspection_version).read_bytes())["path"]
             inspected_records = DiskRecords.from_parts(
                 index_root / "inspected.sqlite", inspected_path)
@@ -311,9 +311,9 @@ def run(spec_path, output, partitions=512):
             rows = inspected.collect()
         if len(rows) != len(decisions) or len({r["trajectory_id"] for r in rows}) != len(rows):
             raise ValueError("Source trajectory IDs or count are not unique")
-        by_path = inspected_records if large else {row["path"]: row for row in rows}
+        by_path = inspected_records if normalized_only else {row["path"]: row for row in rows}
         verified_removed = verify_inspected_decisions(by_path, decisions)
-        kept = inspected_records.view("kept") if large else [row for row in rows if row["status"] == "kept"]
+        kept = inspected_records.view("kept") if normalized_only else [row for row in rows if row["status"] == "kept"]
         if len(kept) != prior_report["kept_count"] or verified_removed != prior_report["removed_count"]:
             raise ValueError("Inspection counts differ from the first-pass report")
 
@@ -405,15 +405,14 @@ def run(spec_path, output, partitions=512):
         if resumed_normalized:
             if copies.mapPartitions(lambda it: verify_copies_partition(it, spec, owner)).sum() != len(kept):
                 raise ValueError("Resumed normalized outputs failed verification")
-        if large:
+        if normalized_only:
             copy_path = json.loads((output / "stages/normalized-copy.json").read_text())["path"]
-            copy_records = DiskRecords.from_parts(
-                index_root / "copies.sqlite", copy_path)
-            copy_rows = copy_records.view()
+            normalized_count = inspected_records.verify_retained_copies(copy_path)
         else:
             copy_rows = copies.collect()
-        if len(copy_rows) != len(kept) or {r["path"] for r in copy_rows} != {r["path"] for r in kept}:
-            raise ValueError("Normalized copy receipts are incomplete")
+            normalized_count = len(copy_rows)
+            if normalized_count != len(kept) or {r["path"] for r in copy_rows} != {r["path"] for r in kept}:
+                raise ValueError("Normalized copy receipts are incomplete")
         store.put_file(store.normalized + "lineage.jsonl", merged_file)
         require_inventory(store, store.normalized, {f["path"]: f["bytes"] for f in candidate["files"]})
         # A source manifest change blocks publication even if all copied objects matched.
@@ -422,10 +421,10 @@ def run(spec_path, output, partitions=512):
             candidate["completed_at_ms"] = int(time.time() * 1000)
             write_json(manifest_path, candidate)
         store.put(store.normalized + "manifest.json", encoded(candidate))
-        emit("normalized_published", count=len(copy_rows), total_bytes=candidate["total_bytes"])
+        emit("normalized_published", count=normalized_count, total_bytes=candidate["total_bytes"])
 
         selected_rows, model_reports = [], []
-        if selection_enabled(spec):
+        if not normalized_only:
             eligible = [row for row in copy_rows if row["selected"]]
             selected_input = sc.parallelize([encoded(row).decode() for row in eligible], partitions)
             resumed_selection = (output / "stages/selection-copy.json").exists()
@@ -469,7 +468,7 @@ def run(spec_path, output, partitions=512):
             "verification": {"independent_audit_performed": spec["audit_report"] is not None,
                              "retained_recheck_performed": spec["recheck_report"] is not None,
                              "removal_witnesses_verified": verified_removed,
-                             "source_hashes": len(rows), "normalized_target_hashes": len(copy_rows),
+                             "source_hashes": len(rows), "normalized_target_hashes": normalized_count,
                              "selected_target_hashes": len(selected_rows),
                              "derived_fields_checked": len(kept), "lineage_rows": len(kept),
                              "unique_raw_sources": origin_count, "source_manifest_unchanged": True},
@@ -479,7 +478,7 @@ def run(spec_path, output, partitions=512):
         emit("publication_completed", kept=len(kept), selected=len(selected_rows), models=len(model_reports))
         return report
     finally:
-        for name in ("decisions", "inspected_records", "copy_records"):
+        for name in ("decisions", "inspected_records"):
             collection = locals().get(name)
             if hasattr(collection, "db"):
                 collection.db.close()

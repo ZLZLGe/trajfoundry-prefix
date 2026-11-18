@@ -20,3 +20,40 @@ def test_streamed_records_have_stable_views_and_unique_identity(tmp_path):
     assert records["b"] == data[1]
     with pytest.raises(sqlite3.IntegrityError):
         records.add("c", data[0], "1")
+
+
+@pytest.mark.parametrize(("receipts", "valid"), [
+    ([("c", "3"), ("a", "1")], True),
+    ([("a", "1")], False),
+    ([("a", "1"), ("a", "1")], False),
+    ([("c", "1"), ("a", "3")], False),
+    ([("c", "3"), ("b", "2")], False),
+    ([("c", "3"), ("x", "X")], False),
+])
+def test_copy_receipts_cover_each_retained_path_and_id_once(tmp_path, receipts, valid):
+    records = DiskRecords(tmp_path / "inspection.sqlite")
+    try:
+        for path, identifier, status in [("a", "1", "kept"), ("b", "2", "removed"), ("c", "3", "kept")]:
+            records.add(path, {"status": status}, identifier)
+        parts = tmp_path / "copies"
+        parts.mkdir()
+        for i, (path, identifier) in enumerate(receipts):
+            row = {"path": path, "trajectory_id": identifier}
+            (parts / f"part-{i}").write_text("\n" + json.dumps(row) + "\n")
+        if valid:
+            assert records.verify_retained_copies(parts) == 2
+            assert records.verify_retained_copies(parts) == 2
+        else:
+            with pytest.raises(ValueError, match="Normalized copy receipt"):
+                records.verify_retained_copies(parts)
+    finally:
+        records.db.close()
+
+
+def test_empty_copy_receipts(tmp_path):
+    records = DiskRecords(tmp_path / "inspection.sqlite")
+    try:
+        (tmp_path / "part-0").touch()
+        assert records.verify_retained_copies(tmp_path) == 0
+    finally:
+        records.db.close()
