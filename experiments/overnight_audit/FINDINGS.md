@@ -553,3 +553,15 @@ corresponding omission in the long request history. All 23 complete
 projected message arrays agreed with their normalized files. These
 observations describe a replay change, without proving the actual process
 cwd or inferring an original shared session ID.
+
+An independent search for shifted dialogue windows reread and verified
+all 28,888 October 30 DeepInfra members of 3,462 repeated session filename
+families (9,956,146,957 bytes). Of these, 28,540 had a peer in the same
+model, harness, session and user scope. Within scope, 25,687 had a peer
+sharing their leading system/developer messages and 19,598 had a peer
+with different headers; these populations overlap. Every file had
+unambiguous tool bindings. There were zero cases where the shorter visible
+dialogue, including both a user and an assistant, matched a contiguous
+block after an earlier user and assistant in the longer record. Dropping
+the header-equality requirement did not change the result. This exact
+window test does not assess summaries, partial overlaps or sessionless files.

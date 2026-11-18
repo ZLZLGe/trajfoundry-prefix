@@ -116,3 +116,11 @@ pairs with matching IDs to response and request history, run
 and the previous normalized source manifest/lineage receipt via
 `--manifest-receipt`. It verifies the full lineage hash and replays each
 source row locally. The scripts produce no S3 writes.
+
+`survey_dialogue_windows.py` takes the repeated-family `--survey`, the
+earlier largest-family `--prior-cache` and a fresh `--output`. It reads
+the verified normalized files locally and searches for the entire shorter
+dialogue as a contiguous interior block or suffix of another capture with
+the same session and identity. The skipped prefix must include both a user
+and an assistant. Tool results retain their relative binding to the correct
+call when its global ordinal shifts. Header agreement is reported separately.
