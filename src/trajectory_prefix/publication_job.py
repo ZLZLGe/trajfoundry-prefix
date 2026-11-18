@@ -225,23 +225,30 @@ def run(spec_path, output, partitions=512):
                 archive.write(file, module.__name__ + "/" + str(file.relative_to(root)))
     sc.addPyFile(str(package))
     try:
-        raw_manifest, manifest_etag = store.read(store.source + "manifest.json")
-        if sha256(raw_manifest) != spec["source_manifest_sha256"]:
+        source_manifest_key = store.source + "manifest.json"
+        raw_manifest, manifest_etag = store.read(source_manifest_key)
+        manifest_identity = {"bytes": len(raw_manifest), "sha256": spec["source_manifest_sha256"]}
+        if sha256(raw_manifest) != manifest_identity["sha256"]:
             raise ValueError("Source manifest changed")
         source = json.loads(raw_manifest)
+        del raw_manifest
         _Manifest.model_validate(source)
         if bool(spec.get("archive_rows")) != (source.get("sessionless_partitioning") == "archive-record-v1"):
             raise ValueError("Archive row accounting must match the source manifest")
         write_json(output / "source-manifest.json", source)
         emit("source_manifest_verified", files=len(source["files"]))
-        expected_inventory = source_inventory(spec, source, len(raw_manifest))
+        expected_inventory = source_inventory(spec, source, manifest_identity["bytes"])
         require_inventory(store, store.source, expected_inventory, allow_manifest=False)
         emit("source_inventory_verified", files=len(expected_inventory))
+        del expected_inventory
         from .disk_records import DiskRecords
 
         large = not selection_enabled(spec)
         decisions, prior_report = read_decisions(
             spec, source, index_root / "decisions.sqlite" if large else None)
+        # The frozen decision index now covers every source file. Only the lineage entry
+        # is needed from the multi-million-row source file list after this point.
+        lineage_entry = next(x for x in source.pop("files") if x["path"] == "lineage.jsonl")
         emit("source_verified", input_count=len(decisions), kept_count=prior_report["kept_count"],
              normalized_uri=spec["normalized_uri"], publish_selection=selection_enabled(spec),
              selection_version=spec.get("selection_version"))
@@ -275,7 +282,6 @@ def run(spec_path, output, partitions=512):
             raise ValueError("Retained count differs from audited count")
 
         # Freeze lineage bytes before joins; keep the source contract and raw provenance.
-        lineage_entry = next(x for x in source["files"] if x["path"] == "lineage.jsonl")
         lineage_path = output / "source-lineage.jsonl"
         if not lineage_path.exists():
             store.download(store.source + "lineage.jsonl", lineage_path, lineage_entry)
@@ -346,8 +352,9 @@ def run(spec_path, output, partitions=512):
         else:
             run_state = {**state, "completed_at_ms": int(time.time() * 1000)}
             files = [{k: row[k] for k in ("path", "bytes", "sha256")} for row in kept]
-            candidate = normalized_manifest(source, [*files, merged_entry], counts, run_state)
-            _Manifest.model_validate(candidate)
+            files.append(merged_entry)
+            candidate = normalized_manifest(source, files, counts, run_state)
+            del files
         _Manifest.model_validate(candidate)
         if candidate["counts"] != counts or candidate["config_hash"] != owner:
             raise ValueError("Manifest checkpoint no longer matches inspected inputs")
@@ -374,9 +381,7 @@ def run(spec_path, output, partitions=512):
         store.put_file(store.normalized + "lineage.jsonl", merged_file)
         require_inventory(store, store.normalized, {f["path"]: f["bytes"] for f in candidate["files"]})
         # A source manifest change blocks publication even if all copied objects matched.
-        source_after, _ = store.read(store.source + "manifest.json", etag=manifest_etag)
-        if source_after != raw_manifest:
-            raise ValueError("Source changed during publication")
+        store.verify(source_manifest_key, manifest_identity, manifest_etag)
         if not manifest_path.exists():
             candidate["completed_at_ms"] = int(time.time() * 1000)
             write_json(manifest_path, candidate)
@@ -412,9 +417,7 @@ def run(spec_path, output, partitions=512):
                 write_json(output / "model-manifests" / (model.replace("/", "_") + ".json"), short_manifest)
                 store.put(prefix + "manifest.json", encoded(short_manifest))
                 model_reports.append({**short_manifest, "output_uri": "s3://" + store.bucket + "/" + prefix})
-        final_source, _ = store.read(store.source + "manifest.json", etag=manifest_etag)
-        if final_source != raw_manifest:
-            raise ValueError("Source changed before final completion")
+        store.verify(source_manifest_key, manifest_identity, manifest_etag)
         report = {
             "passed": True, "publication_id": owner, "spark_master": sc.master,
             "spark_version": spark.version, "source_uri": spec["source_uri"],
