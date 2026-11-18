@@ -116,7 +116,7 @@ def test_writer_rejects_old_versions_and_unguarded_copies(spec):
 
 
 def test_normalized_only_has_no_selection_targets_or_required_thresholds(spec):
-    minimal = {k: spec[k] for k in ("source_uri", "normalized_uri", "models")}
+    minimal = {k: spec[k] for k in ("source_uri", "normalized_uri")}
     minimal["publish_selection"] = False
     store = PublicationStore(minimal, "owner", client=object())
     assert not selection_enabled(minimal)

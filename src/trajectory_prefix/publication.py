@@ -313,7 +313,7 @@ def inspect_partition(lines, spec, owner):
             strict = is_strict_sample(node)
             metrics = {k: value[k] for k in ("total_tokens", "total_tool_calls", "total_rounds")}
             qualifies = selected(metrics, spec) if selection_enabled(spec) else False
-            if node.model not in spec["models"]:
+            if "models" in spec and node.model not in spec["models"]:
                 raise ValueError("Unexpected model")
             if decision["status"] == "removed":
                 target = decision["retained"]
