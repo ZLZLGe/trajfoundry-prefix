@@ -6,11 +6,21 @@ from collections.abc import Mapping
 from pathlib import Path
 
 
+def decode_index_record(line):
+    """Return the JSON payload for SQLite and the fields to index."""
+    try:
+        text = line.decode("utf-8")
+        return text, json.loads(text)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        # Keep the byte decoder's support for BOMs and other JSON encodings.
+        return line, json.loads(line)
+
+
 def _part_records(part):
     with part.open("rb") as stream:
         for line in stream:
             if line.strip():
-                yield json.loads(line)
+                yield decode_index_record(line)
 
 
 class DiskRecords(Mapping):
@@ -23,8 +33,13 @@ class DiskRecords(Mapping):
                         "status TEXT, identifier TEXT UNIQUE)")
 
     def add(self, path, value, identifier=None):
+        payload = json.dumps(value, separators=(",", ":"))
+        self.add_serialized(path, payload, value.get("status"), identifier)
+
+    def add_serialized(self, path, payload, status, identifier):
+        """Index a JSON line already decoded and checked by the caller."""
         self.db.execute("INSERT INTO entries VALUES(?,?,?,?)",
-                        (path, json.dumps(value, separators=(",", ":")), value.get("status"), identifier))
+                        (path, payload, status, identifier))
 
     def __getitem__(self, key):
         row = self.db.execute("SELECT payload FROM entries WHERE path=?", (key,)).fetchone()
@@ -72,7 +87,7 @@ class DiskRecords(Mapping):
         lookup = self.db.cursor()
         copied = 0
         for part in sorted(Path(directory).glob("part-*")):
-            for row in _part_records(part):
+            for _, row in _part_records(part):
                 match = lookup.execute(
                     "SELECT rowid FROM entries WHERE path=? AND identifier=? AND status='kept'",
                     (row["path"], row["trajectory_id"]),
@@ -89,8 +104,8 @@ class DiskRecords(Mapping):
     def from_parts(cls, path, directory):
         result = cls(path)
         for part in sorted(Path(directory).glob("part-*")):
-            for row in _part_records(part):
-                result.add(row["path"], row, row["trajectory_id"])
+            for payload, row in _part_records(part):
+                result.add_serialized(row["path"], payload, row.get("status"), row["trajectory_id"])
             result.commit()
         return result
 

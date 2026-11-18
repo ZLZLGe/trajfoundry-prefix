@@ -18,7 +18,7 @@ from botocore.exceptions import ClientError
 
 from .archive_publication import published_archive, verify_archive_sources
 from .comparison import prefix_source_report, require_prefix
-from .disk_records import DiskRecords
+from .disk_records import DiskRecords, decode_index_record
 from .json_codec import canonical
 from .publication import (
     PublicationStore,
@@ -115,7 +115,7 @@ def read_decisions(spec, source, disk_path=None):
         with path.open("rb") as stream:
             for line in stream:
                 digest.update(line)
-                row = json.loads(line)
+                payload, row = decode_index_record(line)
                 ref = row["record"]
                 # Consuming the manifest entry also detects a repeated decision path.
                 manifest_entry = remaining_files.pop(ref["path"], None)
@@ -129,7 +129,7 @@ def read_decisions(spec, source, disk_path=None):
                 if row["status"] == "kept":
                     kept_count += 1
                 if disk_path:
-                    decisions.add(ref["path"], row, ref["id"])
+                    decisions.add_serialized(ref["path"], payload, row["status"], ref["id"])
                 else:
                     decisions[ref["path"]] = row
         inventory[path.name] = digest.hexdigest()

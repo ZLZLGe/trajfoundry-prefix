@@ -22,6 +22,23 @@ def test_streamed_records_have_stable_views_and_unique_identity(tmp_path):
         records.add("c", data[0], "1")
 
 
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "utf-16"])
+def test_inspection_index_preserves_json_numbers_and_text(tmp_path, encoding):
+    parts = tmp_path / "parts"
+    parts.mkdir()
+    row = {"path": "甲", "trajectory_id": "a", "status": "kept",
+           "metrics": {"total_tokens": 2**80 + 1}, "label": "模型\nA"}
+    (parts / "part-0").write_bytes(json.dumps(row, ensure_ascii=False).encode(encoding))
+    records = DiskRecords.from_parts(tmp_path / "rows.sqlite", parts)
+    try:
+        assert records["甲"] == row
+        assert list(records.scan_items()) == [("甲", row)]
+        assert list(records.view("kept")) == [row]
+        assert list(records.retained_identifiers()) == [("甲", "a")]
+    finally:
+        records.db.close()
+
+
 @pytest.mark.parametrize(("receipts", "valid"), [
     ([("c", "3"), ("a", "1")], True),
     ([("a", "1")], False),
