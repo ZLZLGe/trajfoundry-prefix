@@ -106,10 +106,33 @@ def test_sha_collision_is_not_prefix_proof(tmp_path, monkeypatch):
     assert all(r["status"] == "kept" for r in rows)
 
 
-def test_anonymous_short_exchange_is_isolated():
-    a = node([user(), assistant()])
-    a["metadata"] = {}
-    assert not project(a, "x", "d", Policy()).mergeable
+def test_short_anonymous_prefix_keeps_both_branches_and_respects_scope(tmp_path):
+    from trajectory_prefix.verification import raw_covers
+
+    short = node([user("2+2?"), assistant("4")])
+    short["metadata"] = {}
+    left, right, different, known, masked = (deepcopy(short) for _ in range(5))
+    left["messages"].append(user("Add 1"))
+    right["messages"].append(user("Multiply by 2"))
+    different["messages"][1] = assistant("5")
+    known["metadata"]["end_user_id"] = "known"
+    masked["normalization_audit"] = {"issues": [{"code": "metadata_user_id_masked"}]}
+    nodes = {"short": short, "equal": short, "left": left, "right": right,
+             "different": different, "known": known, "masked": masked, "next-day": short}
+    refs = {key: {"id": key, "dataset": "sample", "date": "day2" if key == "next-day" else "day1"}
+            for key in nodes}
+    policy = Policy(extra_information="messages_only")
+    records = [Record(refs[k], project(n, "sample", refs[k]["date"], policy)) for k, n in nodes.items()]
+    rows = deduplicate(records, tmp_path)
+    kept = {r["record"]["id"] for r in rows if r["status"] == "kept"}
+    assert kept == {"left", "right", "different", "known", "masked", "next-day"}
+    for r in rows:
+        if r["status"] == "removed":
+            a, b = r["record"], r["retained"]
+            assert b["id"] in {"left", "right"} and raw_covers(nodes[a["id"]], nodes[b["id"]], a, b, policy)
+    for k in ("different", "known", "masked", "next-day"):
+        assert not raw_covers(short, nodes[k], refs["short"], refs[k], policy)
+    assert next(r["isolation_reason"] for r in rows if r["record"]["id"] == "masked") == "redacted_identity"
 
 
 def test_distributing_isolated_records_preserves_every_prefix_decision(tmp_path):

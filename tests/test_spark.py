@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from trajectory_prefix.projection import Policy
 from trajectory_prefix.spark import run
 
 
@@ -68,9 +69,12 @@ def test_spark_keeps_original_bytes_and_rechecks_output(spark, tmp_path):
     second = run(spark, output / "retained-input.jsonl", tmp_path / "again", partitions=2)
     assert second["removed_count"] == 0
     checked = tmp_path / "checked"
-    comparison = run(spark, p, checked, partitions=2, check_only=True)
+    historical = Policy(anonymous_min_messages=6, anonymous_min_chars=1024)
+    comparison = run(spark, p, checked, partitions=2, policy=historical, check_only=True)
     assert comparison["input_count"] == 3 and comparison["removed_count"] == 2
     assert comparison["check_only"] is True and "output_bytes" not in comparison
+    with pytest.raises(ValueError, match="identical comparison policy"):
+        run(spark, p, tmp_path / "reuse-old-anonymous-policy", reuse_decisions=checked)
     assert not (checked / "trajectories").exists() and not (checked / "manifest.json").exists()
     decisions = [
         json.loads(line)
@@ -102,8 +106,6 @@ def test_spark_keeps_original_bytes_and_rechecks_output(spark, tmp_path):
     ).hexdigest()
     from dataclasses import replace
 
-    from trajectory_prefix.projection import Policy
-
     with pytest.raises(ValueError, match="identical comparison policy"):
         run(
             spark,
@@ -117,7 +119,6 @@ def test_spark_keeps_original_bytes_and_rechecks_output(spark, tmp_path):
 
 def test_header_review_verifies_actual_bodies_without_publishing_trajectories(spark, tmp_path):
     from trajectory_prefix.header_review import run as review_headers
-    from trajectory_prefix.projection import Policy
 
     plan = []
     for index, header in enumerate(["instruction A", "instruction B", "instruction C"]):

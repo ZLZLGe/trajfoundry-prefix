@@ -1,11 +1,30 @@
 from copy import deepcopy
 
+import pytest
 from test_tool_ids import call, sample
 
 from trajectory_prefix.projection import Policy, covers, project
 from trajectory_prefix.verification import raw_covers
 
 REF = {"dataset": "example", "date": "archive"}
+
+
+@pytest.mark.parametrize(("turns", "user_chars", "with_tool", "legacy_allowed"), [
+    (4, 1100, True, False), (6, 5, True, False), (6, 1100, False, False),
+    (6, 1100, True, True),
+])
+def test_current_and_frozen_anonymous_policies(turns, user_chars, with_tool, legacy_allowed):
+    node = sample("id", with_tool)
+    node["metadata"] = {}
+    node["messages"][0]["content"] = "a" * user_chars
+    if not with_tool:
+        node["messages"][1] = {"role": "assistant", "content": "reply"}
+    while len(node["messages"]) < turns:
+        node["messages"] += [{"role": "user", "content": "again"}, {"role": "assistant", "content": "ok"}]
+    old = {"anonymous_min_messages": 6, "anonymous_min_chars": 1024, "extra_information": "messages_only"}
+    for policy, expected in ((Policy(extra_information="messages_only"), True), (Policy(**old), legacy_allowed)):
+        assert project(node, REF["dataset"], REF["date"], policy).mergeable is expected
+        assert raw_covers(node, node, REF, REF, policy) is expected
 
 
 def test_direct_binding_verifier_checks_real_result_associations():

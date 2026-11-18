@@ -12,7 +12,7 @@
 | without_notifications | user 中以 `<task-notification>` 开头的通知插入或省略 | 至少 4 条剩余消息 |
 | without_headers_and_notifications | 开头指令与通知的组合差异 | 至少 4 条剩余消息 |
 | format_without_headers_and_notifications | 格式、开头指令、通知组合 | 至少 4 条剩余消息 |
-| cross_identity | 消息覆盖被用户、end-user、session 身份边界隔开 | 至少 6 条消息、有工具结果、内容字符总数至少 1,024 |
+| cross_identity | 仅供人工排查跨身份候选 | 至少 6 条消息、有工具结果、内容字符总数至少 1,024。此门槛仅适用于这项诊断 |
 
 除跨身份诊断外，各模式仍使用原来的全部身份分组。跨身份诊断仍限同渠道、实际模型、harness 和日期，且记录被跨越的具体身份字段。身份脱敏、工具绑定异常等已隔离的轨迹参与输入数量和原因统计，但不会进入可覆盖候选比较。
 

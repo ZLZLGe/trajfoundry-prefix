@@ -43,13 +43,15 @@ def _eligible(node, policy):
     if not {"user", "assistant"} <= roles:
         return False
     md = node.get("metadata") or {}
-    if not any(_id(md.get(k)) for k in ("session_id", "user_id", "end_user_id")):
+    limits = policy.legacy_anonymous_limits
+    if limits is not None and not any(_id(md.get(k)) for k in ("session_id", "user_id", "end_user_id")):
+        min_messages, min_chars = limits
         chars = sum(
             len(m["content"]) for m in messages if m["role"] in {"user", "assistant", "tool"}
         )
         if (
-            len(messages) < policy.anonymous_min_messages
-            or chars < policy.anonymous_min_chars
+            len(messages) < min_messages
+            or chars < min_chars
             or "tool" not in roles
         ):
             return False

@@ -19,14 +19,24 @@ def digest(value: bytes) -> bytes:
 @dataclass(frozen=True)
 class Policy:
     rules: tuple[str, ...] = PREFIX_RULES
-    anonymous_min_messages: int = 6
-    anonymous_min_chars: int = 1024
+    anonymous_min_messages: int | None = None
+    anonymous_min_chars: int | None = None
     extra_information: str = "tools_only"
 
     def __post_init__(self):
         validate_rules(self.rules)
         if self.extra_information not in {"messages_only", "tools_only", "preserve_all"}:
             raise ValueError("Unknown extra-information policy")
+
+    @property
+    def legacy_anonymous_limits(self) -> tuple[int, int] | None:
+        # Old receipts stored numeric limits and implicitly required a tool result.
+        if self.anonymous_min_messages is None and self.anonymous_min_chars is None:
+            return None
+        return (
+            6 if self.anonymous_min_messages is None else self.anonymous_min_messages,
+            1024 if self.anonymous_min_chars is None else self.anonymous_min_chars,
+        )
 
 
 @dataclass(frozen=True)
@@ -126,7 +136,6 @@ def project(node: dict[str, Any], dataset: str, date: str, policy: Policy = Poli
     tokens = []
     changes: set[str] = set()
     roles: Counter[str] = Counter()
-    meaningful_chars = 0
     isolation = ""
     bindings: dict[str, tuple[int, str]] = {}
     call_position = 0
@@ -138,8 +147,6 @@ def project(node: dict[str, Any], dataset: str, date: str, policy: Policy = Poli
         if role not in {"system", "developer", "user", "assistant", "tool"}:
             raise ValueError("Unsupported normalized message role")
         roles[role] += 1
-        if role in {"user", "assistant", "tool"}:
-            meaningful_chars += len(message["content"])
         # Same baseline as the archive normalizer: response reasoning envelopes
         # are not stable across replay. All other message fields are compared.
         value = {
@@ -209,13 +216,13 @@ def project(node: dict[str, Any], dataset: str, date: str, policy: Policy = Poli
         tokens.append(canonical(value))
     if not roles["user"] or not roles["assistant"]:
         isolation = "no_user_assistant_exchange"
-    # Unknown identities require substantial identical visible history. This is
-    # content reuse for classification, not proof of an original session ID.
-    if not session and not (user or end_user):
+    limits = policy.legacy_anonymous_limits
+    if limits is not None and not (session or user or end_user):
+        min_messages, min_chars = limits
         if (
-            len(node["messages"]) < policy.anonymous_min_messages
-            or meaningful_chars < policy.anonymous_min_chars
-            or not roles["tool"]
+            not roles["tool"] or len(node["messages"]) < min_messages
+            or sum(len(m["content"]) for m in node["messages"]
+                   if m["role"] in {"user", "assistant", "tool"}) < min_chars
         ):
             isolation = "anonymous_insufficient_history"
     audit = node.get("normalization_audit") or {}
