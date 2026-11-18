@@ -485,3 +485,15 @@ two pairs contain the differing text in the provider requests themselves.
 Their reconstructed message arrays agree exactly with all four normalized
 objects. The observation identifies a possible missed-merge mechanism, but
 does not recover lost characters or estimate a channel-wide removal count.
+
+The repeated-family census covered all 3,462 repeated filename families
+in the provisional DeepInfra plan (28,888 files, 9,956,146,957 bytes).
+All 28,888 metadata session IDs match the respective filename family, with
+3,696 comparison scopes after also respecting model, harness, and identity.
+The unchanged replacement-character comparison found 9,510 strict prefix
+pairs, zero equal-length pairs, and 499 distinct shorter records in 244
+families. Each short record has a direct longer witness outside the short
+set. This accounts for 1.73 percent of the repeated-family population.
+The largest family's 7,875 witnesses reproduced byte for byte. The other
+families account for 445 distinct shorter records. No comparison between
+different filename families was performed in this census.

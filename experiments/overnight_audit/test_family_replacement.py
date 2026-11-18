@@ -1,4 +1,9 @@
-from explain_family_replacement_characters import BROKEN, characters, compare_characters
+from explain_family_replacement_characters import (
+    BROKEN,
+    characters,
+    compare_characters,
+    compare_family,
+)
 
 
 def compare(left, right):
@@ -32,3 +37,20 @@ def test_one_damaged_text_does_not_make_two_concrete_options_equal():
     assert compare(damaged, 'a\u8003')
     assert compare(damaged, 'a\u70b9')
     assert compare('a\u8003', 'a\u70b9') is None
+
+
+def test_family_search_honors_scope_exact_suffix_and_equal_length_orientation():
+    def member(sub, scope, text, suffix=None):
+        messages = [{'role': 'user', 'content': text}]
+        if suffix is not None:
+            messages.append({'role': 'assistant', 'content': suffix})
+        return sub, scope, {'messages': messages}
+
+    rows = [member(0, 'a', BROKEN * 2), member(1, 'a', '\u8003'), member(2, 'a', '\u8003', 'done'),
+            member(3, 'b', '\u8003', 'done'), member(4, 'a', BROKEN * 2, 'other')]
+    witnesses = []
+    counts = compare_family(rows, witnesses.append)
+    assert counts['distinct_strict_shorter_records'] == 2
+    assert counts['distinct_equal_length_members'] == 2
+    assert counts['pair_counts']['already_literal_visible_prefix'] == 2
+    assert {(w['left_sub'], w['right_sub']) for w in witnesses} == {(0, 1), (0, 2), (1, 4)}

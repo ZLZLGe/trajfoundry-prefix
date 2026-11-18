@@ -73,3 +73,8 @@ latter writes the changed positions for every verified full visible prefix.
 arguments and a matching masked-raw Parquet directory. Run it locally with
 the Spark normalizer Python environment for its source reader and PyArrow.
 It saves hashes and short text windows from the corresponding logical rows.
+
+`survey_repeated_family_replacements.py` applies the same verified-pair
+comparison to all repeated filename families in a completed ordinary recheck
+plan. It verifies every member against its plan hash, uses the full identity
+scope inside each family, and writes per-family counts and references.
