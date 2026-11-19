@@ -101,6 +101,20 @@ def test_ordinary_prefix_receipts_remain_compatible(prefix_run, mode):
     assert len(decisions) == 3 and report["kept_count"] == 2
 
 
+def test_token_estimate_review_must_match_a_frozen_retained_file(prefix_run):
+    _, spec, source, refs = prefix_run
+    kept = refs[1]
+    review = {"sha256": kept["sha256"], "stored_total_tokens": 300, "recomputed_total_tokens": 275}
+    spec["reviewed_token_estimates"] = {kept["path"]: review}
+    decisions, _ = read_decisions(spec, source)
+    assert decisions[kept["path"]]["status"] == "kept"
+    for path, digest in (("missing.jsonl", kept["sha256"]), (kept["path"], refs[2]["sha256"]),
+                         (refs[0]["path"], refs[0]["sha256"])):
+        spec["reviewed_token_estimates"] = {path: review | {"sha256": digest}}
+        with pytest.raises(ValueError, match="frozen retained file"):
+            read_decisions(spec, source)
+
+
 @pytest.mark.parametrize("change", ["other_run", "different_member", "duplicate_member", "different_bytes",
                                     "different_date", "changed_digest", "missing_success"])
 def test_prefix_publication_binds_audit_and_recheck_to_actual_members(prefix_run, change):

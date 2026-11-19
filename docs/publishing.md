@@ -4,6 +4,8 @@
 
 调试时可为这两项各自提供报告路径。指定独立审计报告时，发布器核对其来源、策略和输入清单摘要。只提供审计报告时还核对其完整覆盖数。指定保留集复跑报告时，核对实际保留清单并要求新增合并为零。发布回执 `verification` 中的 `independent_audit_performed` 和 `retained_recheck_performed` 记录实际执行的调试阶段，`removal_witnesses_verified` 记录发布器逐对核实并与首次决策对账的移除数。
 
+个别历史轨迹的 `total_tokens` 与原始请求复算值有差异时，可在该分区的发布配置中用 `reviewed_token_estimates` 按保留文件名记录 `sha256`、`stored_total_tokens` 和 `recomputed_total_tokens`。发布器核对冻结文件及其原计数，在内存副本中代入复算值，再用同一校验器重算并核对全部派生字段。输出轨迹和指标筛选均沿用源文件。发布回执记录实际使用的复核条数。
+
 业务处理必须提交 Spark Cluster。提交器复制当前源码和指定的 TrajFoundry 校验源码到控制目录，并记录文件哈希；Driver 和 Executor 使用这一快照。凭据只有仓库外文件路径，不写入配置值、日志或输出。
 
 ```bash

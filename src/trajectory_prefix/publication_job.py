@@ -145,6 +145,11 @@ def read_decisions(spec, source, disk_path=None):
     del remaining_files
     if input_count - kept_count != report["removed_count"]:
         raise ValueError("Removal count differs from the first-pass report")
+    for name, review in spec.get("reviewed_token_estimates", {}).items():
+        decision = decisions.get(name)
+        if (decision is None or decision["status"] != "kept"
+                or decision["record"]["sha256"] != review["sha256"]):
+            raise ValueError("Token estimate review must identify one frozen retained file")
     removed_rows = decisions.view("removed") if disk_path else (
         row for row in decisions.values() if row["status"] == "removed")
     for row in removed_rows:
@@ -578,6 +583,8 @@ def run(spec_path, output, partitions=512):
                              "derived_fields_checked": kept_count, "lineage_rows": kept_count,
                              "unique_raw_sources": origin_count, "source_manifest_unchanged": True},
         }
+        if spec.get("reviewed_token_estimates"):
+            report["verification"]["reviewed_token_estimates"] = len(spec["reviewed_token_estimates"])
         write_json(output / "report.json", report)
         (output / "SUCCEEDED").write_text("All target bytes, inventories, metrics and lineage checked.\n")
         emit("publication_completed", kept=kept_count, selected=len(selected_rows), models=len(model_reports))

@@ -336,6 +336,16 @@ class PublicationStore:
         return expected
 
 
+def _node_for_reviewed_token_estimate(node, ref, review):
+    """Use the independently reproduced estimate only in the validator's copy."""
+    stored, recomputed = review["stored_total_tokens"], review["recomputed_total_tokens"]
+    if (ref["sha256"] != review["sha256"] or type(stored) is not int
+            or type(recomputed) is not int or recomputed < 0 or stored < 0
+            or node.total_tokens != stored or stored == recomputed):
+        raise ValueError("Reviewed token estimate differs from the frozen source or stored count")
+    return node.model_copy(update={"total_tokens": recomputed})
+
+
 def inspect_partition(lines, spec, owner):
     require_prefix(spec)
     from trajfoundry.canonical import trajectory_id
@@ -345,6 +355,7 @@ def inspect_partition(lines, spec, owner):
 
     store = PublicationStore(spec, owner)
     policy = Policy(**spec["policy"])
+    reviews = spec.get("reviewed_token_estimates", {})
     for line in lines:
         decision = json.loads(line)
         ref = decision["record"]
@@ -356,7 +367,11 @@ def inspect_partition(lines, spec, owner):
             if trajectory_filename(node, identifier) != ref["path"]:
                 raise ValueError("Filename mismatch")
             if decision["status"] == "kept":
-                validate_derived_fields(node)
+                validation_node = node
+                if ref["path"] in reviews:
+                    validation_node = _node_for_reviewed_token_estimate(
+                        node, ref, reviews[ref["path"]])
+                validate_derived_fields(validation_node)
             strict = is_strict_sample(node)
             metrics = {k: value[k] for k in ("total_tokens", "total_tool_calls", "total_rounds")}
             qualifies = selected(metrics, spec) if selection_enabled(spec) else False

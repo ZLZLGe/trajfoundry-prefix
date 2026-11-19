@@ -10,6 +10,7 @@ from botocore.utils import parse_timestamp
 
 from trajectory_prefix.publication import (
     PublicationStore,
+    _node_for_reviewed_token_estimate,
     _parse_s3_timestamp,
     encoded,
     merge_origins,
@@ -26,6 +27,21 @@ from trajectory_prefix.publication_job import (
     source_inventory,
     write_sorted_lineage,
 )
+
+
+def test_reviewed_estimate_only_changes_the_validation_copy():
+    node = Mock(total_tokens=300)
+    review = {"sha256": "a" * 64, "stored_total_tokens": 300, "recomputed_total_tokens": 275}
+    ref = {"sha256": "a" * 64}
+    result = _node_for_reviewed_token_estimate(node, ref, review)
+    assert result is node.model_copy.return_value
+    node.model_copy.assert_called_once_with(update={"total_tokens": 275})
+    assert node.total_tokens == 300
+    for change in ({"sha256": "b" * 64}, {"stored_total_tokens": 301},
+                   {"recomputed_total_tokens": True}, {"recomputed_total_tokens": -1},
+                   {"recomputed_total_tokens": 300}):
+        with pytest.raises(ValueError, match="Reviewed token estimate"):
+            _node_for_reviewed_token_estimate(node, ref, review | change)
 
 
 def test_sorted_lineage_preserves_validated_bytes_and_empty_partitions(tmp_path):
